@@ -99,11 +99,69 @@ function Get-UserInput()
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$message
+        [string]$message,
+        [ValidateSet("string", "int", "bool", "array")]
+        [string]$inputType = "string"   
     )
     
     $functionName = $MyInvocation.MyCommand.Name
     Write-Verbose "[$functionName] Prompting user with message: $message"
+    if ($inputType -eq "int")
+    {
+        while ($true)
+        {
+            $userInput = Read-Host -Prompt $message
+            if ([int]::TryParse($userInput, [ref]$null))
+            {
+                break
+            }
+            else
+            {
+                Write-Host "Invalid input. Please enter a valid integer." -ForegroundColor Yellow
+                #beep
+                [console]::beep(1000, 300)                                   
+            }
+        }
+        Write-Verbose "[$functionName] User input received: $userInput"
+        return [int]$userInput
+    }                               
+    elseif ($inputType -eq "bool")
+    {
+        while ($true)
+        {
+            $userInput = Read-Host -Prompt "$message (y/n)"
+            if ($userInput -match '^(y|yes)$')
+            {
+                Write-Verbose "[$functionName] User input received: True"
+                return $true
+            }
+            elseif ($userInput -match '^(n|no)$')
+            {
+                Write-Verbose "[$functionName] User input received: False"
+                return $false
+            }
+            else
+            {
+                Write-Host "Invalid input. Please enter 'y' for yes or 'n' for no." -ForegroundColor Yellow
+                #beep
+                [console]::beep(1000, 300)                                   
+            }
+        }
+    }               
+    elseif ($inputType -eq "array")
+    {
+        Write-Host "$message (Enter multiple values one per line, finish with an empty line):"
+        $inputArray = [System.Collections.ArrayList]@()
+        while ($true)
+        {
+            $line = Read-Host -Prompt "> "
+            if ([string]::IsNullOrWhiteSpace($line)) { break }
+            [void]$inputArray.Add($line.Trim())
+        }   
+        Write-Verbose "[$functionName] User input received: $($inputArray -join ', ')"
+        return $inputArray
+    }                                           
+    # Default to string input
     $userInput = Read-Host -Prompt $message
     Write-Verbose "[$functionName] User input received: $userInput"
     return $userInput
@@ -114,7 +172,6 @@ function Get-UserInput()
 . $PSScriptRoot\functions\Find-FolderPath.ps1                               
 . $PSScriptRoot\functions\Test-PowerShellSyntax.ps1
 $functionsFolder = Find-FolderPath -Path "$psscriptRoot" -FolderName "functions"
-
 if (Test-Path $functionsFolder)
 {
     Write-Verbose "[$scriptName] Importing functions from $functionsFolder"
@@ -167,9 +224,53 @@ $guiltyProcessesToStop = (
     "teams",
     "winword"
 )
+$menuItems = @(
+    "CheckRegKeyExists",
+    "GetUninstallCommands",
+    "KillGuiltyProcesses"                           
+)
 #endregion define variables
 
 write-log -logFile $logFile -StartLogging
+Write-Host "===============================================================" -ForegroundColor Cyan
+Write-Host "Welcome to SAK, the Swiss Army Knife for System Administrators!" -ForegroundColor Cyan      
+Write-Host "===============================================================" -ForegroundColor Cyan
+    
+#if no commandline parameters are passed, display the menu.
+if (-not $PSBoundParameters.Keys.Count)
+{
+    write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"                                    
+    $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
+    
+    switch ($userChoice)
+    {
+        "CheckRegKeyExists"
+        {
+            $inputString = Get-UserInput -message "Enter the path to the registry keys file:"
+            $CheckRegKeyExists = $true
+        }
+        "GetUninstallCommands"
+        {
+            [array]$inputString = Get-UserInput -message "Enter keywords to search for uninstall commands:" -inputType "array"
+            $GetUninstallCommands = $true
+            $exportPathInput = Get-UserInput -message "Enter export path for uninstall commands CSV (or leave blank to skip export):"
+            if (-not [string]::IsNullOrWhiteSpace($exportPathInput))
+            {
+                $ExportPath = $exportPathInput
+            }
+        }
+        "KillGuiltyProcesses"
+        {
+            $KillGuiltyProcesses = $true
+        }
+        default
+        {
+            Write-Host "No valid selection made. Exiting script."
+            write-log -logFile $LogFile -Module $scriptName -Message "No valid selection made. Exiting script." -LogLevel "Warning"                                    
+            exit 1
+        }
+    }
+}                                                                                               
 
 if ($KillGuiltyProcesses)
 {
