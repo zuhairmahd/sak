@@ -35,7 +35,8 @@ SAK provides a rich library of PowerShell functions in the `functions` folder:
 | `Remove-FilesAndFolders` | Removes or moves files and folders with wildcard support |
 | `Remove-RegKeys` | Removes registry keys and values |
 | `Send-EmailWithAttachments` | Sends emails via Microsoft Graph API or Outlook COM automation |
-| `Set-RegKeys` | Creates, updates, or validates registry keys and values |
+| `Set-RegKey` | Sets a single registry key value, creating the key if needed |
+| `Set-RegKeys` | Creates, updates, or validates multiple registry keys and values |
 | `Show-NumericMenu` | Displays an interactive numeric menu for user selection |
 | `Test-IsProductInstalled` | Checks if a product is installed via file, registry, or MSI |
 | `Test-IsServiceRunning` | Checks if a Windows service is currently running |
