@@ -85,100 +85,50 @@ function ConvertFrom-UninstallCommand()
         Arguments = $arguments
     }
 }
-#endregion helper functions
 
-#region import functions.
-function Find-FolderPath()
+function Get-UserInput()
 {
     <#
     .SYNOPSIS
-        Searches from the given path starting from the children and upwards for a folder with the specified name.
-    .PARAMETER Path
-        The starting path to begin searching from.
-    .PARAMETER FolderName
-        The name of the folder to search for.
+        Prompts the user for input with a specified message.
+    .PARAMETER message
+        The message to display to the user.
     .OUTPUTS
-        Returns the full path to the folder if found, otherwise $null.
+        Returns the user's input as a string.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        [string]$FolderName
+        [string]$message
     )
+    
     $functionName = $MyInvocation.MyCommand.Name
-    #write verbose log of received parameters
-    Write-Verbose "[$functionName] Find-FolderPath called with Path: $Path, FolderName: $FolderName"
-    try
-    {
-        $currentPath = (Resolve-Path -Path $Path).Path
-        Write-Verbose "[$functionName] Current path resolved to: $currentPath"
+    Write-Verbose "[$functionName] Prompting user with message: $message"
+    $userInput = Read-Host -Prompt $message
+    Write-Verbose "[$functionName] User input received: $userInput"
+    return $userInput
+}                       
+#endregion helper functions
 
-        # 1. Search children (recursively) of the starting path
-        Write-Verbose "[$functionName] Searching children of $currentPath for folder named $FolderName"
-        $childMatch = Get-ChildItem -Path $currentPath -Directory -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $FolderName } | Select-Object -First 1
-        Write-Verbose "[$functionName] Checking child match: $($childMatch.FullName)"
-        if ($childMatch)
-        {
-            Write-Verbose "[$functionName] Found folder in children: $($childMatch.FullName)"
-            return $childMatch.FullName
-        }
-        # Also check if the starting path itself matches
-        if ((Split-Path -Path $currentPath -Leaf) -ieq $FolderName)
-        {
-            Write-Verbose "[$functionName] Starting path itself matches: $currentPath"
-            return $currentPath
-        }
-
-        # 2. Search up the parent chain, at each level search its children for the folder
-        while ($currentPath)
-        {
-            $parent = Split-Path -Path $currentPath -Parent
-            if ($parent -eq $currentPath -or [string]::IsNullOrEmpty($parent))
-            {
-                break 
-            } # Reached root
-            Write-Verbose "[$functionName] Searching children of parent: $parent for folder named $FolderName"
-            $siblingMatch = Get-ChildItem -Path $parent -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $FolderName } | Select-Object -First 1
-            if ($siblingMatch)
-            {
-                Write-Verbose "[$functionName] Found folder in parent: $($siblingMatch.FullName)"
-                return $siblingMatch.FullName
-            }
-            # Also check if the parent itself matches
-            if ((Split-Path -Path $parent -Leaf) -ieq $FolderName)
-            {
-                Write-Verbose "[$functionName] Parent itself matches: $parent"
-                return $parent
-            }
-            $currentPath = $parent
-        }
-        Write-Verbose "[$functionName] No folder found with name $FolderName in children or parent hierarchy."
-        return $null
-    }
-    catch
-    {
-        Write-Error "[$functionName] Error occurred while searching for folder: $_"
-        return $null
-    }
-}
+#region import functions.
+. $PSScriptRoot\functions\Find-FolderPath.ps1                               
+. $PSScriptRoot\functions\Test-PowerShellSyntax.ps1
 $functionsFolder = Find-FolderPath -Path "$psscriptRoot" -FolderName "functions"
 
 if (Test-Path $functionsFolder)
 {
     Write-Verbose "[$scriptName] Importing functions from $functionsFolder"
-    $functionsToImport = @(
-        'Close-Process.ps1',
-        'Get-UninstallCommand.ps1',
-        'Import-RegKeysFromFile.ps1',
-        'Set-RegKeys.ps1',
-        'Write-Log.ps1'
-    )
-    $functions = Get-ChildItem -Path "$functionsFolder\*" -Include $functionsToImport -File
+    $functions = Get-ChildItem -Path "$functionsFolder\*.ps1" -File
     foreach ($function in $functions)
     {
         Write-Verbose " [$scriptName] Importing function $function"
+        $syntaxCheck = Test-PowerShellSyntax -File $function -errorsOnly
+        if ($syntaxCheck.HasErrors)
+        {
+            Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
+            write-log -logFile $logFile -Module $scriptName -Message "Syntax errors found in $($function.FullName). Skipping import." -LogLevel "Error"
+            continue
+        }                                           
         . $function.FullName
     }
 }
@@ -191,7 +141,7 @@ else
 
 #region define variables
 $scriptName = $MyInvocation.MyCommand.Name
-$logFile = Join-Path -Path $psscriptRoot "$scriptName.log"       
+$logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $exitCode = 0
 $guiltyProcessesToStop = (
     "dm",
@@ -220,7 +170,6 @@ $guiltyProcessesToStop = (
 #endregion define variables
 
 write-log -logFile $logFile -StartLogging
-write-log -logFile $logFile -module $scriptName -message "Test script started." 
 
 if ($KillGuiltyProcesses)
 {

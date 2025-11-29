@@ -34,6 +34,7 @@ Get-Help about_ScriptBlocks
     param(
         [Parameter(Mandatory = $true)]
         [System.IO.FileInfo]$File,
+        [switch]$errorsOnly,
         [switch]$ShowDetails
     )
     
@@ -60,10 +61,8 @@ Get-Help about_ScriptBlocks
         {
             $hasErrors = $true
             $errorCount = $parseErrors.Count
-            
             Write-Host "`nSyntax validation FAILED: $($File.FullName)" -ForegroundColor Red
             Write-Host "Found $($parseErrors.Count) parse error(s):" -ForegroundColor Red
-            
             foreach ($err in $parseErrors)
             {
                 $errors += $err
@@ -145,7 +144,7 @@ Get-Help about_ScriptBlocks
             Write-Host "  ScriptBlock compilation error: $($_.Exception.Message)" -ForegroundColor Red
         }
         
-        if (-not $hasErrors)
+        if (-not $hasErrors -and -not $errorsOnly)
         {
             Write-Host "[OK] $($File.Name)" -ForegroundColor Green
         }
