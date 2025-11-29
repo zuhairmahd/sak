@@ -47,12 +47,13 @@ function Show-NumericMenu()
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
-        [string[]]$choices,
+        $choices,
         [string]$banner = "Please press the number of your choice and press enter.",
         [string]$Prompt = "Please select an option",
         $errorMessage = "Invalid selection. Please try again.",
         [switch]$RequireEnter,
-        [int]$MaxItemsPerPage = 20
+        [int]$MaxItemsPerPage = 20,
+        [switch]$Silent
     )
     #region Print a verbose message with received parameters
     $functionName = $MyInvocation.MyCommand.Name
@@ -103,7 +104,25 @@ function Show-NumericMenu()
         for ($i = 0; $i -lt $pageChoices.Count; $i++)
         {
             $globalIndex = $startIndex + $i + 1
-            Write-Host "$globalIndex. $($pageChoices[$i])" -ForegroundColor White
+            $currentItem = $pageChoices[$i]
+            
+            Write-Verbose "[$functionName] Item $globalIndex type: $($currentItem.GetType().FullName)"
+            Write-Verbose "[$functionName] Item $globalIndex value: $($currentItem | Out-String)"
+            
+            #Check the type, if single string, just print it, otherwise, the hashtable will contain a name and a description which we need to print.
+            if ($currentItem -is [hashtable])
+            {
+                Write-Verbose "[$functionName] Item is hashtable with keys: $($currentItem.Keys -join ', ')"
+                $name = $currentItem['name']
+                $description = $currentItem['description']
+                Write-Verbose "[$functionName] Name: '$name', Description: '$description'"
+                Write-Host "$globalIndex. $name - $description" -ForegroundColor White
+            }
+            else
+            {
+                Write-Verbose "[$functionName] Item is not hashtable, treating as string"
+                Write-Host "$globalIndex. $currentItem" -ForegroundColor White
+            }
         }
         Write-Host "0. Exit" -ForegroundColor White
         
@@ -165,6 +184,13 @@ function Show-NumericMenu()
             Write-Verbose "[$functionName] Paging keys: $($pagingKeys -join ', ')"
         }
         Write-Log -LogFile $LogFile -Module $functionName -Message "Valid menu options: $($validKeys -join ', '), Mnemonic keys: $($mnemonicKeys -join ', ')" -LogLevel "Debug"
+        
+        # If Silent mode is enabled, return without prompting for input
+        if ($Silent)
+        {
+            Write-Verbose "[$functionName] Silent mode enabled, returning without input prompt"
+            return $null
+        }
         
         # Handle paging navigation
         $pageNavigationOccurred = $false
@@ -307,10 +333,23 @@ function Show-NumericMenu()
     {
         # Convert to integer explicitly to avoid any type conversion issues
         $index = [int]$selection - 1
-        Write-Verbose "[$functionName] Returning choice at index $($index): '$($choices[$index])'"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "User selected option $($index + 1): '$($choices[$index])'" -LogLevel "Debug"
-        # Return the selected choice
-        return $choices[$index]
+        $selectedItem = $choices[$index]
+        
+        # If the choice is a hashtable, return the name property, otherwise return the string
+        if ($selectedItem -is [hashtable])
+        {
+            $returnValue = $selectedItem.name
+            Write-Verbose "[$functionName] Returning hashtable choice name at index $($index): '$returnValue'"
+            Write-Log -LogFile $LogFile -Module $functionName -Message "User selected option $($index + 1): '$returnValue'" -LogLevel "Debug"
+        }
+        else
+        {
+            $returnValue = $selectedItem
+            Write-Verbose "[$functionName] Returning string choice at index $($index): '$returnValue'"
+            Write-Log -LogFile $LogFile -Module $functionName -Message "User selected option $($index + 1): '$returnValue'" -LogLevel "Debug"
+        }
+        
+        return $returnValue
     }
     else
     {

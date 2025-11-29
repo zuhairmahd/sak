@@ -225,9 +225,18 @@ $guiltyProcessesToStop = (
     "winword"
 )
 $menuItems = @(
-    "CheckRegKeyExists",
-    "GetUninstallCommands",
-    "KillGuiltyProcesses"                           
+    @{    
+        name        = "CheckRegKeyExists"
+        description = "Check if registry keys from a file exist with correct values."   
+    },
+    @{  
+        name        = "GetUninstallCommands"
+        description = "Discover uninstall commands for installed software based on keywords."                           
+    },
+    @{  
+        name        = "KillGuiltyProcesses" 
+        description = "Close most common interfering processes before performing operations."                           
+    }
 )
 #endregion define variables
 
