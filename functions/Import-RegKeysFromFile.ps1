@@ -73,6 +73,7 @@ function Import-RegKeysFromFile()
         {
             $fullPath = $Matches[1]
             Write-Verbose "[$functionName] Found registry path: $fullPath"
+            Write-Log -LogFile $logFile -Module $functionName -Message "Found registry path: $fullPath" -LogLevel "Verbose"
             
             # Parse hive and path
             if ($fullPath -match '^HKEY_LOCAL_MACHINE\\(.+)$' -or $fullPath -match '^HKLM\\(.+)$')
@@ -98,21 +99,24 @@ function Import-RegKeysFromFile()
         }
         
         # Parse registry value lines
-        if ($currentPath -and $line -match '^"?([^"=]+)"?\s*=\s*(.+)$')
+        # Match either: @=value, "quoted name"=value (handles spaces and special chars)
+        if ($currentPath -and $line -match '^(@|"([^"]+)")\s*=\s*(.*)$')
         {
-            $valueName = $Matches[1]
-            $valueData = $Matches[2].Trim()
+            # $Matches[1] = entire name part (@, or "quoted")
+            # $Matches[2] = content inside quotes (if quoted, empty if @)
+            # $Matches[3] = value data (everything after =)
             
-            # Handle default value
-            if ($valueName -eq '@')
+            if ($Matches[1] -eq '@')
             {
                 $valueName = '(Default)'
             }
             else
             {
-                # Remove quotes from value name
-                $valueName = $valueName -replace '^"(.*)"$', '$1'
+                # Quoted value name (handles spaces, special characters)
+                $valueName = $Matches[2]
             }
+            
+            $valueData = $Matches[3].Trim()
             
             $valueType = "String"
             $finalValue = $null
@@ -120,32 +124,94 @@ function Import-RegKeysFromFile()
             # Parse value type and data
             if ($valueData -match '^"(.*)"$')
             {
-                # String value
+                # String value (including empty strings)
                 $valueType = "String"
-                $finalValue = $Matches[1] -replace '\\\\', '\' -replace '\\"', '"'
+                # Handle escape sequences: \\ -> \, \" -> ", and preserve the value
+                $finalValue = $Matches[1] -replace '\\"', '"' -replace '\\\\', '\'
             }
-            elseif ($valueData -match '^dword:([0-9a-fA-F]{8})$')
+            elseif ($valueData -match '^dword:([0-9a-fA-F]{1,8})$')
             {
-                # DWORD value
+                # DWORD value (handles both full 8 digits and shorter representations)
                 $valueType = "DWord"
-                $finalValue = [Convert]::ToInt32($Matches[1], 16)
+                # Pad to 8 digits if needed
+                $hexValue = $Matches[1].PadLeft(8, '0')
+                $finalValue = [Convert]::ToInt32($hexValue, 16)
             }
             elseif ($valueData -match '^hex:(.+)$')
             {
-                # Binary data
+                # Binary data (REG_BINARY)
+                $valueType = "Binary"
+                $hexString = $Matches[1]
+                
+                # Handle multi-line hex values (continuation lines start with spaces and end with backslash)
+                while ($i + 1 -lt $lines.Count -and $lines[$i + 1] -match '^\s+(.+)$')
+                {
+                    $i++
+                    $continuationLine = $Matches[1].Trim()
+                    # Remove trailing backslash if present
+                    $continuationLine = $continuationLine -replace '\\$', ''
+                    $hexString += $continuationLine
+                }
+                
+                # Remove all whitespace and backslashes, then split by comma
+                $hexString = $hexString -replace '\s', '' -replace '\\', ''
+                $hexBytes = $hexString -split ',' | Where-Object { $_ -ne '' } | ForEach-Object { 
+                    try { [Convert]::ToByte($_, 16) } 
+                    catch { Write-Warning "[$functionName] Invalid hex byte: $_"; $null }
+                } | Where-Object { $null -ne $_ }
+                $finalValue = $hexBytes
+            }
+            elseif ($valueData -match '^hex\(0\):(.+)$')
+            {
+                # REG_NONE (hex(0)) - treat as binary
                 $valueType = "Binary"
                 $hexString = $Matches[1]
                 
                 # Handle multi-line hex values
-                while ($i + 1 -lt $lines.Count -and $lines[$i + 1].Trim() -match '^\s+(.+)$')
+                while ($i + 1 -lt $lines.Count -and $lines[$i + 1] -match '^\s+(.+)$')
                 {
                     $i++
-                    $hexString += $Matches[1]
+                    $continuationLine = $Matches[1].Trim()
+                    $continuationLine = $continuationLine -replace '\\$', ''
+                    $hexString += $continuationLine
                 }
                 
                 $hexString = $hexString -replace '\s', '' -replace '\\', ''
-                $hexBytes = $hexString -split ',' | Where-Object { $_ } | ForEach-Object { [Convert]::ToByte($_, 16) }
+                $hexBytes = $hexString -split ',' | Where-Object { $_ -ne '' } | ForEach-Object { 
+                    try { [Convert]::ToByte($_, 16) } 
+                    catch { Write-Warning "[$functionName] Invalid hex byte: $_"; $null }
+                } | Where-Object { $null -ne $_ }
                 $finalValue = $hexBytes
+            }
+            elseif ($valueData -match '^hex\(1\):(.+)$')
+            {
+                # REG_SZ as hex (hex(1)) - convert to string
+                $valueType = "String"
+                $hexString = $Matches[1]
+                
+                # Handle multi-line hex values
+                while ($i + 1 -lt $lines.Count -and $lines[$i + 1] -match '^\s+(.+)$')
+                {
+                    $i++
+                    $continuationLine = $Matches[1].Trim()
+                    $continuationLine = $continuationLine -replace '\\$', ''
+                    $hexString += $continuationLine
+                }
+                
+                $hexString = $hexString -replace '\s', '' -replace '\\', ''
+                $hexBytes = $hexString -split ',' | Where-Object { $_ -ne '' } | ForEach-Object { 
+                    try { [Convert]::ToByte($_, 16) } 
+                    catch { Write-Warning "[$functionName] Invalid hex byte: $_"; $null }
+                } | Where-Object { $null -ne $_ }
+                
+                if ($hexBytes.Count -gt 0)
+                {
+                    $finalValue = [System.Text.Encoding]::Unicode.GetString($hexBytes) -replace '\x00+$', ''
+                }
+                else
+                {
+                    $finalValue = ''
+                }
             }
             elseif ($valueData -match '^hex\(2\):(.+)$')
             {
@@ -153,16 +219,31 @@ function Import-RegKeysFromFile()
                 $valueType = "ExpandString"
                 $hexString = $Matches[1]
                 
-                # Handle multi-line hex values
-                while ($i + 1 -lt $lines.Count -and $lines[$i + 1].Trim() -match '^\s+(.+)$')
+                # Handle multi-line hex values (continuation lines start with spaces and end with backslash)
+                while ($i + 1 -lt $lines.Count -and $lines[$i + 1] -match '^\s+(.+)$')
                 {
                     $i++
-                    $hexString += $Matches[1]
+                    $continuationLine = $Matches[1].Trim()
+                    # Remove trailing backslash if present
+                    $continuationLine = $continuationLine -replace '\\$', ''
+                    $hexString += $continuationLine
                 }
                 
+                # Remove all whitespace and backslashes, then split by comma
                 $hexString = $hexString -replace '\s', '' -replace '\\', ''
-                $hexBytes = $hexString -split ',' | Where-Object { $_ } | ForEach-Object { [Convert]::ToByte($_, 16) }
-                $finalValue = [System.Text.Encoding]::Unicode.GetString($hexBytes) -replace '\x00+$', ''
+                $hexBytes = $hexString -split ',' | Where-Object { $_ -ne '' } | ForEach-Object { 
+                    try { [Convert]::ToByte($_, 16) } 
+                    catch { Write-Warning "[$functionName] Invalid hex byte: $_"; $null }
+                } | Where-Object { $null -ne $_ }
+                
+                if ($hexBytes.Count -gt 0)
+                {
+                    $finalValue = [System.Text.Encoding]::Unicode.GetString($hexBytes) -replace '\x00+$', ''
+                }
+                else
+                {
+                    $finalValue = ''
+                }
             }
             elseif ($valueData -match '^hex\(7\):(.+)$')
             {
@@ -170,16 +251,32 @@ function Import-RegKeysFromFile()
                 $valueType = "MultiString"
                 $hexString = $Matches[1]
                 
-                # Handle multi-line hex values
-                while ($i + 1 -lt $lines.Count -and $lines[$i + 1].Trim() -match '^\s+(.+)$')
+                # Handle multi-line hex values (continuation lines start with spaces and end with backslash)
+                while ($i + 1 -lt $lines.Count -and $lines[$i + 1] -match '^\s+(.+)$')
                 {
                     $i++
-                    $hexString += $Matches[1]
+                    $continuationLine = $Matches[1].Trim()
+                    # Remove trailing backslash if present
+                    $continuationLine = $continuationLine -replace '\\$', ''
+                    $hexString += $continuationLine
                 }
                 
+                # Remove all whitespace and backslashes, then split by comma
                 $hexString = $hexString -replace '\s', '' -replace '\\', ''
-                $hexBytes = $hexString -split ',' | Where-Object { $_ } | ForEach-Object { [Convert]::ToByte($_, 16) }
-                $finalValue = ([System.Text.Encoding]::Unicode.GetString($hexBytes) -replace '\x00+$', '') -split '\x00'
+                $hexBytes = $hexString -split ',' | Where-Object { $_ -ne '' } | ForEach-Object { 
+                    try { [Convert]::ToByte($_, 16) } 
+                    catch { Write-Warning "[$functionName] Invalid hex byte: $_"; $null }
+                } | Where-Object { $null -ne $_ }
+                
+                if ($hexBytes.Count -gt 0)
+                {
+                    $unicodeString = [System.Text.Encoding]::Unicode.GetString($hexBytes) -replace '\x00+$', ''
+                    $finalValue = $unicodeString -split '\x00' | Where-Object { $_ -ne '' }
+                }
+                else
+                {
+                    $finalValue = @()
+                }
             }
             elseif ($valueData -match '^hex\(b\):(.+)$')
             {
@@ -187,16 +284,47 @@ function Import-RegKeysFromFile()
                 $valueType = "QWord"
                 $hexString = $Matches[1]
                 
-                # Handle multi-line hex values
-                while ($i + 1 -lt $lines.Count -and $lines[$i + 1].Trim() -match '^\s+(.+)$')
+                # Handle multi-line hex values (continuation lines start with spaces and end with backslash)
+                while ($i + 1 -lt $lines.Count -and $lines[$i + 1] -match '^\s+(.+)$')
                 {
                     $i++
-                    $hexString += $Matches[1]
+                    $continuationLine = $Matches[1].Trim()
+                    # Remove trailing backslash if present
+                    $continuationLine = $continuationLine -replace '\\$', ''
+                    $hexString += $continuationLine
                 }
                 
+                # Remove all whitespace and backslashes, then split by comma
                 $hexString = $hexString -replace '\s', '' -replace '\\', ''
-                $hexBytes = $hexString -split ',' | Where-Object { $_ } | ForEach-Object { $_ }
-                $finalValue = [Convert]::ToInt64(($hexBytes[0..7] -join ''), 16)
+                $hexBytes = $hexString -split ',' | Where-Object { $_ -ne '' }
+                
+                # QWORD is 8 bytes in little-endian format
+                if ($hexBytes.Count -ge 8)
+                {
+                    try
+                    {
+                        # Convert little-endian hex bytes to QWORD
+                        $qwordValue = 0
+                        for ($b = 0; $b -lt 8; $b++)
+                        {
+                            $byteValue = [Convert]::ToByte($hexBytes[$b], 16)
+                            $qwordValue += [int64]$byteValue -shl ($b * 8)
+                        }
+                        $finalValue = $qwordValue
+                    }
+                    catch
+                    {
+                        Write-Warning "[$functionName] Failed to convert QWORD bytes: $hexString"
+                        Write-Log -LogFile $logFile -Module $functionName -Message "Failed to convert QWORD bytes: $hexString" -LogLevel "Warning"
+                        $finalValue = 0
+                    }
+                }
+                else
+                {
+                    Write-Warning "[$functionName] Insufficient bytes for QWORD (need 8, got $($hexBytes.Count))"
+                    Write-Log -LogFile $logFile -Module $functionName -Message "Insufficient bytes for QWORD (need 8, got $($hexBytes.Count))" -LogLevel "Warning"
+                    $finalValue = 0
+                }
             }
             else
             {

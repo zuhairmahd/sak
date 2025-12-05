@@ -258,30 +258,79 @@ None
             }
             elseif ($currentValue -ne $value)
             {
-                if ($CheckOnly.IsPresent)
+                # Special handling for array comparison (MultiString values)
+                $valuesAreDifferent = $false
+                if ($value -is [array] -and $currentValue -is [array])
                 {
-                    # CheckOnly mode - report what would be updated
-                    $returnObject.hasCorrectValues = $false
-                    Write-Host "[CHECK ONLY] Would update registry value: $fullPath = $value (currently: $currentValue) (Type: $type)" -ForegroundColor Yellow
-                    Write-Log -LogFile $logFile -Module $functionName -Message "[CHECK ONLY] Would update registry value: $fullPath = $value (currently: $currentValue) (Type: $type)" -LogLevel "Information"
-                    $returnObject.entriesUpdated += $entry
-                    $returnObject.entriesUpdatedCount++
+                    # Compare arrays element by element
+                    if ($value.Count -ne $currentValue.Count)
+                    {
+                        $valuesAreDifferent = $true
+                    }
+                    else
+                    {
+                        for ($idx = 0; $idx -lt $value.Count; $idx++)
+                        {
+                            if ($value[$idx] -ne $currentValue[$idx])
+                            {
+                                $valuesAreDifferent = $true
+                                break
+                            }
+                        }
+                    }
+                }
+                elseif ($value -is [byte[]] -and $currentValue -is [byte[]])
+                {
+                    # Compare byte arrays for Binary values
+                    if ($value.Count -ne $currentValue.Count)
+                    {
+                        $valuesAreDifferent = $true
+                    }
+                    else
+                    {
+                        for ($idx = 0; $idx -lt $value.Count; $idx++)
+                        {
+                            if ($value[$idx] -ne $currentValue[$idx])
+                            {
+                                $valuesAreDifferent = $true
+                                break
+                            }
+                        }
+                    }
                 }
                 else
                 {
-                    # Value exists but is different - update it
-                    Write-Verbose "[$functionName] Updating registry value: $fullPath (Old: $currentValue, New: $value)"
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Updating registry value: $fullPath (Old: $currentValue, New: $value)" -LogLevel "Information"
-                    $regKey = $hive.OpenSubKey($path, $true)
-                    Write-Verbose "[$functionName] Setting value: Name='$registryValueName', Value='$value', Type=$type"
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Setting value: Name='$registryValueName', Value='$value', Type=$type" -LogLevel "Information"
-                    $regKey.SetValue($registryValueName, $value, $type)
-                    $regKey.Close()
-                    
-                    Write-Host "Updated registry value: $fullPath = $value (was: $currentValue) (Type: $type)"
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Updated registry value: $fullPath = $value (was: $currentValue) (Type: $type)" -LogLevel "Information"
-                    $returnObject.entriesUpdated += $entry
-                    $returnObject.entriesUpdatedCount++
+                    # Simple comparison for scalars
+                    $valuesAreDifferent = ($currentValue -ne $value)
+                }
+                
+                if ($valuesAreDifferent)
+                {
+                    if ($CheckOnly.IsPresent)
+                    {
+                        # CheckOnly mode - report what would be updated
+                        $returnObject.hasCorrectValues = $false
+                        Write-Host "[CHECK ONLY] Would update registry value: $fullPath = $value (currently: $currentValue) (Type: $type)" -ForegroundColor Yellow
+                        Write-Log -LogFile $logFile -Module $functionName -Message "[CHECK ONLY] Would update registry value: $fullPath = $value (currently: $currentValue) (Type: $type)" -LogLevel "Information"
+                        $returnObject.entriesUpdated += $entry
+                        $returnObject.entriesUpdatedCount++
+                    }
+                    else
+                    {
+                        # Value exists but is different - update it
+                        Write-Verbose "[$functionName] Updating registry value: $fullPath (Old: $currentValue, New: $value)"
+                        Write-Log -LogFile $logFile -Module $functionName -Message "Updating registry value: $fullPath (Old: $currentValue, New: $value)" -LogLevel "Information"
+                        $regKey = $hive.OpenSubKey($path, $true)
+                        Write-Verbose "[$functionName] Setting value: Name='$registryValueName', Value='$value', Type=$type"
+                        Write-Log -LogFile $logFile -Module $functionName -Message "Setting value: Name='$registryValueName', Value='$value', Type=$type" -LogLevel "Information"
+                        $regKey.SetValue($registryValueName, $value, $type)
+                        $regKey.Close()
+                        
+                        Write-Host "Updated registry value: $fullPath = $value (was: $currentValue) (Type: $type)"
+                        Write-Log -LogFile $logFile -Module $functionName -Message "Updated registry value: $fullPath = $value (was: $currentValue) (Type: $type)" -LogLevel "Information"
+                        $returnObject.entriesUpdated += $entry
+                        $returnObject.entriesUpdatedCount++
+                    }
                 }
             }
             else
