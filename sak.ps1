@@ -24,10 +24,10 @@ function ConvertFrom-UninstallCommand()
         [string]$cmd
     )
 
-    $functionName = $MyInvocation.MyCommand.Name                
+    $functionName = $MyInvocation.MyCommand.Name
     $filePath = $null
     $arguments = $null
-    
+
     if ($cmd -match '^"([^"]+)"(.*)$')
     {
         # Quoted path (e.g., "C:\Program Files\App\uninstall.exe" /args)
@@ -42,13 +42,13 @@ function ConvertFrom-UninstallCommand()
         $filePath = "MsiExec.exe"
         $arguments = $matches[2].Trim()
         Write-Verbose "[$functionName] Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"
-        write-log -logFile $logFile -Module $functionName -Message "Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"                                   
+        write-log -logFile $logFile -Module $functionName -Message "Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"
     }
     elseif ($cmd -match '^([A-Z]:\\.+\.exe)\s+(.*)$')
     {
         # Unquoted full path with .exe extension
         Write-Verbose "[$functionName] Parsing unquoted full path with .exe extension: $cmd"
-        write-log -logFile $logFile -Module $functionName -Message "Parsing unquoted full path with .exe extension: $cmd"   
+        write-log -logFile $logFile -Module $functionName -Message "Parsing unquoted full path with .exe extension: $cmd"
         $exeIndex = $cmd.LastIndexOf('.exe')
         if ($exeIndex -ge 0)
         {
@@ -61,25 +61,25 @@ function ConvertFrom-UninstallCommand()
             $arguments = $matches[2].Trim()
         }
         Write-Verbose "[$functionName] Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"
-        write-log -logFile $logFile -Module $functionName -Message "Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"                                    
+        write-log -logFile $logFile -Module $functionName -Message "Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"
     }
     elseif ($cmd -match '^(\S+\.exe)\s*(.*)$')
     {
         # Simple executable name without path
         $filePath = $matches[1]
         $arguments = $matches[2].Trim()
-        Write-Verbose "[$functionName] Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"             
-        write-log -logFile $logFile -Module $functionName -Message "Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"                                
+        Write-Verbose "[$functionName] Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"
     }
     else
     {
         # Fallback: treat the whole command as filepath
         $filePath = $cmd.Trim()
         $arguments = ""
-        Write-Verbose "[$functionName] Fallback parsing: FilePath='$filePath', Arguments='$arguments'"                          
-        write-log -logFile $logFile -Module $functionName -Message "Fallback parsing: FilePath='$filePath', Arguments='$arguments'"                     
+        Write-Verbose "[$functionName] Fallback parsing: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Fallback parsing: FilePath='$filePath', Arguments='$arguments'"
     }
-    
+
     return [PSCustomObject]@{
         FilePath  = $filePath
         Arguments = $arguments
@@ -101,9 +101,9 @@ function Get-UserInput()
         [Parameter(Mandatory = $true)]
         [string]$message,
         [ValidateSet("string", "int", "bool", "array")]
-        [string]$inputType = "string"   
+        [string]$inputType = "string"
     )
-    
+
     $functionName = $MyInvocation.MyCommand.Name
     Write-Verbose "[$functionName] Prompting user with message: $message"
     if ($inputType -eq "int")
@@ -119,12 +119,12 @@ function Get-UserInput()
             {
                 Write-Host "Invalid input. Please enter a valid integer." -ForegroundColor Yellow
                 #beep
-                [console]::beep(1000, 300)                                   
+                [console]::beep(1000, 300)
             }
         }
         Write-Verbose "[$functionName] User input received: $userInput"
         return [int]$userInput
-    }                               
+    }
     elseif ($inputType -eq "bool")
     {
         while ($true)
@@ -144,10 +144,10 @@ function Get-UserInput()
             {
                 Write-Host "Invalid input. Please enter 'y' for yes or 'n' for no." -ForegroundColor Yellow
                 #beep
-                [console]::beep(1000, 300)                                   
+                [console]::beep(1000, 300)
             }
         }
-    }               
+    }
     elseif ($inputType -eq "array")
     {
         Write-Host "$message (Enter multiple values one per line, finish with an empty line):"
@@ -155,21 +155,24 @@ function Get-UserInput()
         while ($true)
         {
             $line = Read-Host -Prompt "> "
-            if ([string]::IsNullOrWhiteSpace($line)) { break }
+            if ([string]::IsNullOrWhiteSpace($line))
+            {
+                break
+            }
             [void]$inputArray.Add($line.Trim())
-        }   
+        }
         Write-Verbose "[$functionName] User input received: $($inputArray -join ', ')"
         return $inputArray
-    }                                           
+    }
     # Default to string input
     $userInput = Read-Host -Prompt $message
     Write-Verbose "[$functionName] User input received: $userInput"
     return $userInput
-}                       
+}
 #endregion helper functions
 
 #region import functions.
-. $PSScriptRoot\functions\Find-FolderPath.ps1                               
+. $PSScriptRoot\functions\Find-FolderPath.ps1
 . $PSScriptRoot\functions\Test-PowerShellSyntax.ps1
 $functionsFolder = Find-FolderPath -Path "$psscriptRoot" -FolderName "functions"
 if (Test-Path $functionsFolder)
@@ -185,7 +188,7 @@ if (Test-Path $functionsFolder)
             Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
             write-log -logFile $logFile -Module $scriptName -Message "Syntax errors found in $($function.FullName). Skipping import." -LogLevel "Error"
             continue
-        }                                           
+        }
         . $function.FullName
     }
 }
@@ -210,7 +213,7 @@ $guiltyProcessesToStop = (
     "adobe_licensing_wf_helper_acro",
     "chrome",
     "excel",
-    "explorer", 
+    "explorer",
     "firefox",
     "msaccess",
     "msedge",
@@ -225,32 +228,32 @@ $guiltyProcessesToStop = (
     "winword"
 )
 $menuItems = @(
-    @{    
+    @{
         name        = "CheckRegKeyExists"
-        description = "Check if registry keys from a file exist with correct values."   
+        description = "Check if registry keys from a file exist with correct values."
     },
-    @{  
+    @{
         name        = "GetUninstallCommands"
-        description = "Discover uninstall commands for installed software based on keywords."                           
+        description = "Discover uninstall commands for installed software based on keywords."
     },
-    @{  
-        name        = "KillGuiltyProcesses" 
-        description = "Close most common interfering processes before performing operations."                           
+    @{
+        name        = "KillGuiltyProcesses"
+        description = "Close most common interfering processes before performing operations."
     }
 )
 #endregion define variables
 
 write-log -logFile $logFile -StartLogging
 Write-Host "===============================================================" -ForegroundColor Cyan
-Write-Host "Welcome to SAK, the Swiss Army Knife for System Administrators!" -ForegroundColor Cyan      
+Write-Host "Welcome to SAK, the Swiss Army Knife for System Administrators!" -ForegroundColor Cyan
 Write-Host "===============================================================" -ForegroundColor Cyan
-    
+
 #if no commandline parameters are passed, display the menu.
 if (-not $PSBoundParameters.Keys.Count)
 {
-    write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"                                    
+    write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
     $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
-    
+
     switch ($userChoice)
     {
         "CheckRegKeyExists"
@@ -275,17 +278,56 @@ if (-not $PSBoundParameters.Keys.Count)
         default
         {
             Write-Host "No valid selection made. Exiting script."
-            write-log -logFile $LogFile -Module $scriptName -Message "No valid selection made. Exiting script." -LogLevel "Warning"                                    
+            write-log -logFile $LogFile -Module $scriptName -Message "No valid selection made. Exiting script." -LogLevel "Warning"
             exit 1
         }
     }
-}                                                                                               
+}
 
 if ($KillGuiltyProcesses)
 {
-    $processesClosed = Close-Process -ProcessNames $guiltyProcessesToStop
-    Write-Verbose "[$scriptName] Processes closed result: $($processesClosed | Out-String)"         
-    write-log -logFile $LogFile -Module $scriptName -Message "Processes closed result: $($processesClosed | Out-String)" -LogLevel "Information"                                    
+    Write-Host "Select whether you want to kill all processes or a single process:"
+    $choice = Read-Host -Prompt "Enter 'all' to kill all guilty processes or 'single' to specify one process"
+    while ($choice -notin @('all', 'single', 'a', 's'))
+    {
+        Write-Host "Invalid choice. Please enter 'all' or 'single'." -ForegroundColor Yellow
+        #beep
+        [console]::beep(1000, 300)
+        $choice = Read-Host -Prompt "Enter 'all' to kill all guilty processes or 'single' to specify one process"
+    }
+    $choice = if ($choice -in @('a', 'all'))
+    {
+        'all'
+    }
+    else
+    {
+        'single'
+    }
+    switch ($choice)
+    {
+        all
+        {
+            $processesClosed = Close-Process -ProcessNames $guiltyProcessesToStop
+        }
+        single
+        {
+            $runningProcesses = Get-Process | Select-Object -ExpandProperty ProcessName
+            $guiltyProcessesToStop = $guiltyProcessesToStop | Where-Object { $runningProcesses -contains $_ }
+            $processChoice = Show-NumericMenu -choices $guiltyProcessesToStop -banner "Select a process to close:" -RequireEnter
+            if ($null -eq $processChoice -or $processChoice -eq 0)
+            {
+                Write-Host "No process selected. Exiting process closure."
+                write-log -logFile $LogFile -Module $scriptName -Message "No process selected for closure. Exiting." -LogLevel "Warning"
+            }
+            else
+            {
+                Write-Host "You selected to close process: $processChoice"
+                $processesClosed = Close-Process -ProcessNames $processChoice
+            }
+        }
+    }
+    Write-Verbose "[$scriptName] Processes closed result: $($processesClosed | Out-String)"
+    write-log -logFile $LogFile -Module $scriptName -Message "Processes closed result: $($processesClosed | Out-String)" -LogLevel "Information"
     if ($processesClosed.allProcessesClosed)
     {
         Write-Host "All interfering processes closed successfully."
@@ -298,11 +340,11 @@ if ($KillGuiltyProcesses)
         foreach ($proc in $processesClosed.processesNotClosed)
         {
             Write-Host " - $proc"
-            write-log -logFile $LogFile -Module $scriptName -Message " - $proc" -LogLevel "Information"                         
-        }                                           
+            write-log -logFile $LogFile -Module $scriptName -Message " - $proc" -LogLevel "Information"
+        }
         $exitCode = 1
-    }                                           
-}       
+    }
+}
 
 if ($CheckRegKeyExists)
 {
@@ -344,7 +386,7 @@ if ($CheckRegKeyExists)
                     Write-Host "Expected value: $($failedEntry.expectedValue)"
                     Write-Host "Actual value: $($failedEntry.actualValue)"
                     Write-Log -LogFile $logFile -Module $scriptName -Message " - $failedEntry" -LogLevel "Warning"
-                }               
+                }
             }
 
         }
@@ -378,7 +420,7 @@ if ($GetUninstallCommands)
         Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $inputString" -ForegroundColor Cyan
         Write-Host "===================================================================" -ForegroundColor Cyan
         write-log -logFile $LogFile -Module $scriptName -Message "Found $($uninstallData.products.Count) product(s) to uninstall." -LogLevel "Information"
-        
+
         # Display most likely candidate first if exists
         if ($uninstallData.mostLikelyMatch)
         {
@@ -396,7 +438,7 @@ if ($GetUninstallCommands)
                 Write-Host "Install Date:    $($mostLikely.InstallDate)"
             }
             if (-not ([string]::IsNullOrEmpty($mostLikely.InstallLocation)))
-            {           
+            {
                 Write-Host "Install Location: $($mostLikely.InstallLocation)"
             }
             Write-Host "Registry path: $($mostLikely.RegistryPath)"
@@ -432,7 +474,7 @@ if ($GetUninstallCommands)
             foreach ($product in $uninstallData.products)
             {
                 write-log -logFile $LogFile -Module $scriptName -Message "Processing uninstall for: $($product.Name) (Version: $($product.Version), Size: $($product.SizeMB)MB, Publisher: $($product.Publisher))" -LogLevel "Information"
-            
+
                 Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
                 if ($product.IsMostLikely)
                 {
@@ -448,7 +490,7 @@ if ($GetUninstallCommands)
                 Write-Host "Install Date:    $($product.InstallDate)"
                 Write-Host "Registry path: $($product.RegistryPath)"
                 Write-Host "Registry Key:    $($product.RegKey)"
-                Write-Host "Install Location: $($product.InstallLocation)"      
+                Write-Host "Install Location: $($product.InstallLocation)"
                 # Create export object
                 $exportObj = [PSCustomObject]@{
                     ProductName             = $product.Name
@@ -456,7 +498,7 @@ if ($GetUninstallCommands)
                     Publisher               = $product.Publisher
                     SizeMB                  = $product.SizeMB
                     InstallDate             = $product.InstallDate
-                    RegistryPath            = $product.RegistryPath             
+                    RegistryPath            = $product.RegistryPath
                     RegistryKey             = $product.RegKey
                     InstallLocation         = $product.InstallLocation
                     IsMostLikely            = $product.IsMostLikely
@@ -473,13 +515,13 @@ if ($GetUninstallCommands)
                     Write-Host "`n  Raw Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.UninstallCmd)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw uninstall command: $($product.UninstallCmd)" -LogLevel "Verbose"
-                
+
                     $parsed = ConvertFrom-UninstallCommand -cmd $product.UninstallCmd
                     Write-Host "  Parsed Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    FilePath:  $($parsed.FilePath)"
                     Write-Host "    Arguments: $($parsed.Arguments)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Parsed - FilePath: $($parsed.FilePath), Arguments: $($parsed.Arguments)" -LogLevel "Information"
-                
+
                     $exportObj.UninstallFilePath = $parsed.FilePath
                     $exportObj.UninstallArguments = $parsed.Arguments
                 }
@@ -493,13 +535,13 @@ if ($GetUninstallCommands)
                     Write-Host "`n  Raw Quiet Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.QuietUninstall)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw quiet uninstall command: $($product.QuietUninstall)" -LogLevel "Verbose"
-                
+
                     $parsedQuiet = ConvertFrom-UninstallCommand -cmd $product.QuietUninstall
                     Write-Host "  Parsed Quiet Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    FilePath:  $($parsedQuiet.FilePath)"
                     Write-Host "    Arguments: $($parsedQuiet.Arguments)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Parsed Quiet - FilePath: $($parsedQuiet.FilePath), Arguments: $($parsedQuiet.Arguments)" -LogLevel "Information"
-                
+
                     $exportObj.QuietUninstallFilePath = $parsedQuiet.FilePath
                     $exportObj.QuietUninstallArguments = $parsedQuiet.Arguments
                 }
