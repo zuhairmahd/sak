@@ -4,7 +4,8 @@ param(
     [string]$CSVFileName,
     [string]$outputFile = "Processed_CSVFile.csv",
     [Parameter(Mandatory = $true)]
-    [ValidateSet('RemoveColumns', 'extractGroupAssignments')]
+    [ValidateSet('RemoveColumns', 'extractGroupAssignments', 'removeRows')]
+    [switch]$fromTop,
     [string]$Operation
 )
 

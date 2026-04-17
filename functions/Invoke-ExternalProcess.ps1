@@ -31,13 +31,16 @@ function Invoke-ExternalProcess()
 .PARAMETER UseNativeStartProcess
     When set, uses PowerShell's Start-Process cmdlet for process creation and output redirection.
 
+.PARAMETER MSIInstaller
+    When set, indicates that the executable is an MSI installer (msiexec.exe). This affects exit code interpretation.
+
 .OUTPUTS
     PSCustomObject with:
         FilePath, Arguments, exitCode, exitCodeDescription, commandOutput, stoppedProcesses (array), success (bool),
         waitedOnProcessIds (array of Int32), timedOut (bool)
     If the executable cannot be launched (not found, access denied, etc.), exitCode will be non-zero,
     success will be $false, and commandOutput will contain the error message. No waiting is attempted.
-    
+
     For msiexec.exe processes, exitCodeDescription will contain the meaning of the MSI exit code,
     and success will always be $true regardless of the exit code, as MSI operations may have
     various exit codes that still indicate successful completion (e.g., reboot required).
@@ -49,7 +52,7 @@ function Invoke-ExternalProcess()
     Author: Zuhair Mahmoud
     Date: 06/12/2025
     This function is intended for use in automation scenarios where robust process launching and monitoring is required.
-#>
+    #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory = $true)]
@@ -61,6 +64,7 @@ function Invoke-ExternalProcess()
         [int]$specialExitCode = 255,
         [switch]$waitForExit,
         [switch]$UseNativeStartProcess,
+        [switch]$MSIInstaller,
         [int]$timeout = 0
     )
 
@@ -100,17 +104,17 @@ function Invoke-ExternalProcess()
     }
     Write-Verbose "[$functionName] Processed $($argsText.Count) arguments."
     write-log -logFile $LogFile -module $functionName -Message "Processed $($argsText.Count) arguments." -LogLevel "Verbose"
-    
+
     # Resolve process name for detection/wait
     $procName = if ($ProcessName)
     {
-        $ProcessName 
+        $ProcessName
     }
     else
     {
-        [System.IO.Path]::GetFileNameWithoutExtension($FilePath) 
+        [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
     }
-    
+
     # Return object scaffold
     $returnObject = [PSCustomObject]@{
         FilePath            = $FilePath
@@ -123,6 +127,7 @@ function Invoke-ExternalProcess()
         errorMessage        = $null
         waitedOnProcessIds  = @()
         timedOut            = $false
+        IsMSI               = $MSIInstaller
     }
 
     # Preflight: attempt to resolve the executable and detect obvious not-found conditions
@@ -131,11 +136,11 @@ function Invoke-ExternalProcess()
     $resolved = $null
     try
     {
-        $resolved = Get-Command -Name $exeForCheck -ErrorAction Stop 
+        $resolved = Get-Command -Name $exeForCheck -ErrorAction Stop
     }
     catch
     {
-        $resolved = $null 
+        $resolved = $null
     }
     if (-not $resolved)
     {
@@ -162,11 +167,11 @@ function Invoke-ExternalProcess()
             $preStartPids = @()
             try
             {
-                $preStartPids = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id) 
+                $preStartPids = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
             }
             catch
             {
-                $preStartPids = @() 
+                $preStartPids = @()
             }
             $launchStart = Get-Date
             Write-Log -LogFile $LogFile -Module $scriptName -Message "Starting process: $FilePath $argsText" -LogLevel "Information"
@@ -183,20 +188,20 @@ function Invoke-ExternalProcess()
                 $nativeCode = $null
                 if ($_.Exception -is [System.ComponentModel.Win32Exception])
                 {
-                    $nativeCode = $_.Exception.NativeErrorCode 
+                    $nativeCode = $_.Exception.NativeErrorCode
                 }
                 elseif ($_.Exception.InnerException -is [System.ComponentModel.Win32Exception])
                 {
-                    $nativeCode = $_.Exception.InnerException.NativeErrorCode 
+                    $nativeCode = $_.Exception.InnerException.NativeErrorCode
                 }
                 $errMsg = $_.Exception.Message
                 $returnObject.exitCode = if ($nativeCode)
                 {
-                    [int]$nativeCode 
+                    [int]$nativeCode
                 }
                 else
                 {
-                    1 
+                    1
                 }
                 $returnObject.commandOutput = $errMsg
                 $returnObject.success = $false
@@ -229,11 +234,11 @@ function Invoke-ExternalProcess()
                 $candidates = @()
                 try
                 {
-                    $candidates = @(Get-Process -Name $procName -ErrorAction SilentlyContinue) 
+                    $candidates = @(Get-Process -Name $procName -ErrorAction SilentlyContinue)
                 }
                 catch
                 {
-                    $candidates = @() 
+                    $candidates = @()
                 }
                 Write-Verbose "[$functionName] Discovery pass #$($discoveryPass): found $($candidates.Count) candidate process(es) for '$procName'."
                 if ($candidates.Count -gt 0)
@@ -248,21 +253,21 @@ function Invoke-ExternalProcess()
                             $stStr = $c.StartTime
                             if ($null -ne $lastLaunchStart -and $c.StartTime -lt $lastLaunchStart)
                             {
-                                $include = $false 
+                                $include = $false
                             }
                         }
                         catch
-                        { 
+                        {
                             # some system processes throw when accessing StartTime
                         }
                         if ($include -and ($lastPreStartPids -contains $c.Id))
                         {
-                            $include = $false 
+                            $include = $false
                         }
                         Write-Verbose "[$functionName] Candidate PID=$($c.Id) Name=$($c.ProcessName) StartTime=$stStr Include=$include"
                         if ($include)
                         {
-                            $filtered += $c.Id 
+                            $filtered += $c.Id
                         }
                     }
                     $newPids = @($filtered | Select-Object -Unique)
@@ -270,7 +275,7 @@ function Invoke-ExternalProcess()
 
                 if ($newPids.Count -eq 0)
                 {
-                    Start-Sleep -Milliseconds 300 
+                    Start-Sleep -Milliseconds 300
                 }
             } while ($newPids.Count -eq 0 -and (Get-Date) -lt $discoveryDeadline)
             if ($newPids.Count -gt 0)
@@ -284,21 +289,22 @@ function Invoke-ExternalProcess()
                 $deadline = $null
                 if ($timeout -gt 0)
                 {
-                    $deadline = (Get-Date).AddSeconds([int]$timeout) 
+                    $deadline = (Get-Date).AddSeconds([int]$timeout)
                 }
 
                 $tickLast = Get-Date
                 $childDiscoverLast = Get-Date
+                $progressLast = Get-Date
                 while ($true)
                 {
                     $running = @()
                     try
                     {
-                        $running = @(Get-Process -Id $trackedPids -ErrorAction SilentlyContinue) 
+                        $running = @(Get-Process -Id $trackedPids -ErrorAction SilentlyContinue)
                     }
                     catch
                     {
-                        $running = @() 
+                        $running = @()
                     }
 
                     # Periodically look for child processes of any still-running tracked PIDs
@@ -331,12 +337,12 @@ function Invoke-ExternalProcess()
                                             $created = [System.Management.ManagementDateTimeConverter]::ToDateTime($wp.CreationDate)
                                             if ($created -lt $lastLaunchStart)
                                             {
-                                                $ok = $false 
+                                                $ok = $false
                                             }
                                         }
                                     }
                                     catch
-                                    { 
+                                    {
                                     }
                                     if ($ok -and -not ($trackedPids -contains [int]$wp.ProcessId))
                                     {
@@ -357,7 +363,7 @@ function Invoke-ExternalProcess()
 
                     if ($running.Count -eq 0)
                     {
-                        break 
+                        break
                     }
 
                     if ($null -ne $deadline -and (Get-Date) -ge $deadline)
@@ -373,6 +379,22 @@ function Invoke-ExternalProcess()
                         $tickLast = Get-Date
                         Write-Verbose "[$functionName] Waiting on '$procName'... still running PIDs: $($running.Id -join ', ')"
                         write-log -logFile $LogFile -module $functionName -Message "Waiting on '$procName'... still running PIDs: $($running.Id -join ', ')" -LogLevel "Verbose"
+                    }
+
+                    # Print a concise progress message to the console every 30 seconds
+                    if ((Get-Date) -ge $progressLast.AddSeconds(30))
+                    {
+                        $progressLast = Get-Date
+                        $elapsed = if ($lastLaunchStart)
+                        {
+                            (Get-Date) - $lastLaunchStart
+                        }
+                        else
+                        {
+                            [TimeSpan]::Zero
+                        }
+                        $elapsedText = "$([int]$elapsed.TotalMinutes)m $($elapsed.Seconds)s"
+                        Write-Host "Waiting on '$procName' (elapsed: $elapsedText). Running PIDs: $($running.Id -join ', ')"
                     }
 
                     Start-Sleep -Seconds 1
@@ -421,11 +443,11 @@ function Invoke-ExternalProcess()
                 $preStartPids2 = @()
                 try
                 {
-                    $preStartPids2 = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id) 
+                    $preStartPids2 = @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
                 }
                 catch
                 {
-                    $preStartPids2 = @() 
+                    $preStartPids2 = @()
                 }
                 $launchStart2 = Get-Date
 
@@ -440,20 +462,20 @@ function Invoke-ExternalProcess()
                     $nativeCode = $null
                     if ($_.Exception -is [System.ComponentModel.Win32Exception])
                     {
-                        $nativeCode = $_.Exception.NativeErrorCode 
+                        $nativeCode = $_.Exception.NativeErrorCode
                     }
                     elseif ($_.Exception.InnerException -is [System.ComponentModel.Win32Exception])
                     {
-                        $nativeCode = $_.Exception.InnerException.NativeErrorCode 
+                        $nativeCode = $_.Exception.InnerException.NativeErrorCode
                     }
                     $errMsg = $_.Exception.Message
                     $returnObject.exitCode = if ($nativeCode)
                     {
-                        [int]$nativeCode 
+                        [int]$nativeCode
                     }
                     else
                     {
-                        1 
+                        1
                     }
                     $returnObject.commandOutput = $errMsg
                     $returnObject.success = $false
@@ -498,18 +520,26 @@ function Invoke-ExternalProcess()
                 $cmd = Start-Process @startProcessParams
                 Write-Verbose "[$functionName] Process started with ID: $($cmd.Id)"
                 write-log -logFile $logFile -module $functionName -message "Process started with ID: $($cmd.Id)"
-                
+
                 if ($waitForExit)
                 {
                     # Wait for process to exit with timeout enforcement
                     $counter = 0
                     $lastOutputSize = 0
                     $lastErrorSize = 0
-                    $effectiveTimeout = if ($timeout -le 0) { [int]::MaxValue } else { $timeout }
-                    
+                    $effectiveTimeout = if ($timeout -le 0)
+                    {
+                        [int]::MaxValue
+                    }
+                    else
+                    {
+                        $timeout
+                    }
+
                     Write-Verbose "[$functionName] Waiting for process to exit with timeout of $effectiveTimeout seconds..."
                     write-log -logFile $logFile -module $functionName -message "Waiting for process to exit with timeout of $effectiveTimeout seconds..."
-                    
+
+                    $progressLast = Get-Date
                     while (-not $cmd.HasExited -and $counter -lt $effectiveTimeout)
                     {
                         if ($counter % 10 -eq 0)
@@ -518,9 +548,17 @@ function Invoke-ExternalProcess()
                             Write-Verbose "[$functionName] Waiting for process to exit... Elapsed time: $([int]$elapsedTime.TotalMinutes)m $($elapsedTime.Seconds)s."
                             write-log -logFile $logFile -module $functionName -message "Waiting for process to exit... Elapsed time: $counter seconds." -LogLevel "Verbose"
                         }
+                        # Print a concise progress message to the console every 30 seconds
+                        if ((Get-Date) -ge $progressLast.AddSeconds(30))
+                        {
+                            $progressLast = Get-Date
+                            $elapsedTime = [TimeSpan]::FromSeconds($counter)
+                            $elapsedText = "$([int]$elapsedTime.TotalMinutes)m $($elapsedTime.Seconds)s"
+                            Write-Host "Waiting for process to exit (elapsed: $elapsedText). PID: $($cmd.Id)"
+                        }
                         Start-Sleep -Seconds 1
                         $counter++
-                        
+
                         # Check for new stdout content
                         if (Test-Path -Path $stdOutTempFile -PathType Leaf)
                         {
@@ -543,7 +581,7 @@ function Invoke-ExternalProcess()
                                 Write-Verbose "[$functionName] Could not read stdout: $($_.Exception.Message)"
                             }
                         }
-                        
+
                         # Check for new stderr content
                         if (Test-Path -Path $stdErrTempFile -PathType Leaf)
                         {
@@ -567,22 +605,22 @@ function Invoke-ExternalProcess()
                             }
                         }
                     }
-                    
+
                     if ($counter -ge $effectiveTimeout -and -not $cmd.HasExited)
                     {
                         Write-Verbose "[$functionName] Process timed out after $timeout seconds. Attempting to stop process and children."
-                        write-log -logFile $logFile -module $functionName -message "Process timed out after $timeout seconds. Attempting to stop process and children."                       
+                        write-log -logFile $logFile -module $functionName -message "Process timed out after $timeout seconds. Attempting to stop process and children."
                         try
                         {
                             # Stop the main process
                             $cmd | Stop-Process -Force -ErrorAction Stop
                             Write-Verbose "[$functionName] Main process (PID: $($cmd.Id)) stopped due to timeout."
                             write-log -logFile $logFile -module $functionName -message "Main process (PID: $($cmd.Id)) stopped due to timeout."
-                            
+
                             # Also attempt to stop any child processes
                             try
                             {
-                                $children = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | 
+                                $children = Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
                                     Where-Object { $_.ParentProcessId -eq $cmd.Id }
                                 foreach ($child in $children)
                                 {
@@ -595,20 +633,20 @@ function Invoke-ExternalProcess()
                             {
                                 Write-Verbose "[$functionName] Could not enumerate/stop child processes: $($_.Exception.Message)"
                                 write-log -logFile $logFile -module $functionName -message "Could not enumerate/stop child processes: $($_.Exception.Message)"
-                            }                       
+                            }
                         }
                         catch
                         {
                             Write-Error "[$functionName] Failed to stop process after timeout: $($_.Exception.Message)"
-                            write-log -logFile $logFile -module $functionName -message "Failed to stop process after timeout: $($_.Exception.Message)" -LogLevel "Error"                       
+                            write-log -logFile $logFile -module $functionName -message "Failed to stop process after timeout: $($_.Exception.Message)" -LogLevel "Error"
                         }
                         $returnObject.timedOut = $true
-                    }                                                                   
-                    else 
+                    }
+                    else
                     {
                         Write-Verbose "[$functionName] Process completed within timeout."
                         write-log -logFile $logFile -module $functionName -message "Process completed within timeout."
-                        
+
                         # Capture any remaining output after process exit
                         if (Test-Path -Path $stdOutTempFile -PathType Leaf)
                         {
@@ -630,7 +668,7 @@ function Invoke-ExternalProcess()
                                 Write-Verbose "[$functionName] Could not read final stdout: $($_.Exception.Message)"
                             }
                         }
-                        
+
                         if (Test-Path -Path $stdErrTempFile -PathType Leaf)
                         {
                             try
@@ -661,18 +699,18 @@ function Invoke-ExternalProcess()
                     write-log -logFile $logFile -module $functionName -message "Process started in background (not waiting for exit)."
                     $invokeSucceeded = $true
                 }
-                
+
                 # Capture full output for return object
                 $cmdOutput = Get-Content -Path $stdOutTempFile -Raw -ErrorAction SilentlyContinue
                 $cmdError = Get-Content -Path $stdErrTempFile -Raw -ErrorAction SilentlyContinue
-                
+
                 # Determine exit code - if process timed out, use special code
                 if ($returnObject.timedOut)
                 {
                     $lastExitCode = -1  # Special exit code for timeout
                     Write-Verbose "[$functionName] Process was terminated due to timeout. Exit code set to -1."
                     write-log -logFile $logFile -module $functionName -message "Process was terminated due to timeout. Exit code set to -1." -LogLevel "Warning"
-                    
+
                     # Display any remaining output from timed out process
                     if ($cmdOutput -or $cmdError)
                     {
@@ -682,14 +720,25 @@ function Invoke-ExternalProcess()
                 }
                 else
                 {
-                    $lastExitCode = if ($null -ne $cmd.ExitCode) { $cmd.ExitCode } elseif ($cmdError) { 100 } else { 0 }
+                    $lastExitCode = if ($null -ne $cmd.ExitCode)
+                    {
+                        $cmd.ExitCode
+                    }
+                    elseif ($cmdError)
+                    {
+                        100
+                    }
+                    else
+                    {
+                        0
+                    }
                 }
-                
+
                 Write-Verbose "[$functionName] Total process output captured: $($cmdOutput.Length) bytes"
                 Write-Verbose "[$functionName] Total process error captured: $($cmdError.Length) bytes"
                 Write-Verbose "[$functionName] Process exit code: $lastExitCode"
                 write-log -logFile $logFile -module $functionName -message "Process exit code: $lastExitCode"
-                
+
                 if ($lastExitCode -ne 0)
                 {
                     if ($returnObject.timedOut)
@@ -735,9 +784,10 @@ function Invoke-ExternalProcess()
     # Check if the process is msiexec.exe and handle its specific exit codes
     $isMsiexec = $false
     $executableName = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
-    if ($executableName -eq "msiexec")
+    if ($executableName -eq "msiexec" -or $MSIInstaller)
     {
         $isMsiexec = $true
+        $returnObject.IsMSI = $isMsiexec
         Write-Verbose "[$functionName] Detected msiexec.exe process, will handle MSI-specific exit codes."
         write-log -logFile $LogFile -module $functionName -Message "Detected msiexec.exe process, will handle MSI-specific exit codes." -LogLevel "Information"
     }
@@ -811,26 +861,33 @@ function Invoke-ExternalProcess()
             # Get the exit code description if available
             $exitCodeDescription = if ($msiExitCodes.ContainsKey($lastExitCode))
             {
-                $msiExitCodes[$lastExitCode] 
+                $msiExitCodes[$lastExitCode]
             }
             else
             {
-                "Unknown MSI exit code: $lastExitCode" 
+                "Unknown MSI exit code: $lastExitCode"
             }
-            
+
             Write-Verbose "[$functionName] MSI process completed with exit code: $lastExitCode - $exitCodeDescription"
             write-log -logFile $LogFile -module $functionName -Message "MSI process completed with exit code: $lastExitCode - $exitCodeDescription" -LogLevel "Information"
-            
+
             # For MSI processes, determine success based on common success codes
             # 0 = SUCCESS, 1641 = SUCCESS_REBOOT_INITIATED, 3010 = SUCCESS_REBOOT_REQUIRED
-            $msiSuccess = $lastExitCode -eq 0 -or $lastExitCode -eq 1641 -or $lastExitCode -eq 3010
-            
+            $msiSuccess = $lastExitCode -in @(0, 1641, 3010)
+
             $returnObject.exitCode = $lastExitCode
             $returnObject.exitCodeDescription = $exitCodeDescription
             $returnObject.commandOutput = $proc
             $returnObject.success = $msiSuccess
-            $returnObject.errorMessage = if (-not $msiSuccess) { $exitCodeDescription } else { $null }
-            
+            $returnObject.errorMessage = if (-not $msiSuccess)
+            {
+                $exitCodeDescription
+            }
+            else
+            {
+                $null
+            }
+
             if ($msiSuccess)
             {
                 Write-Verbose "[$functionName] MSI installation completed successfully (exit code indicates success or reboot required)."
