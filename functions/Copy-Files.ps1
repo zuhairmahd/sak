@@ -117,55 +117,82 @@ function Copy-Files()
     {
         if (-not $noSubFolders)
         {
-            #Check if any of the source file is in a subfolder, if so, append the subfolder to the destination and create it if needed.
+            if (-not $sourceRoot)
+            {
+                $sourceRoot = Split-Path -Parent $returnObject.filesToCopy[0]
+                foreach ($sourceFile in $returnObject.filesToCopy)
+                {
+                    $sourceParent = Split-Path -Parent $sourceFile
+                    while (
+                        $sourceRoot -and
+                        $sourceParent -and
+                        $sourceParent.Length -ge $sourceRoot.Length -and
+                        -not $sourceParent.StartsWith($sourceRoot, [System.StringComparison]::OrdinalIgnoreCase)
+                    )
+                    {
+                        $sourceRoot = Split-Path -Parent $sourceRoot
+                    }
+                }
+            }
+
+            #Check if any of the source file is in a subfolder, if so, append the relative subfolder to the destination and create it if needed.
             $subfolder = Split-Path -Parent $file
-            Write-Verbose "[$functionName] Checking whether file $file is a subfolder..."
-            write-log -logFile $logFile -module $functionName -message "Checking whether file $file is a subfolder..."
+            Write-Verbose "[$functionName] Checking whether file $file is in a subfolder relative to source root $sourceRoot..."
+            write-log -logFile $logFile -module $functionName -message "Checking whether file $file is in a subfolder relative to source root $sourceRoot..."
             if ($subfolder -ne $file)
             {
-                $subfolder = Split-Path -Parent $file
-                $destinationFolder = Join-Path -Path $Destination -ChildPath $subfolder
-                Write-Verbose "[$functionName] File $file is in subfolder $subfolder. Ensuring destination folder $destinationFolder exists..."
-                write-log -logFile $logFile -module $functionName -message "File $file is in subfolder $subfolder. Ensuring destination folder $destinationFolder exists..."                    
-                if (-not (Test-Path -Path $destinationFolder))
+                $relativeSubfolder = [System.IO.Path]::GetRelativePath($sourceRoot, $subfolder)
+                if ($relativeSubfolder -and $relativeSubfolder -ne '.')
                 {
-                    Write-Host "Creating folder: $destinationFolder"
-                    write-log -logFile $logFile -module $functionName -message "Creating folder: $destinationFolder"                                
-                    New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
-                    $returnObject.subfoldersCreated += $destinationFolder
-                    $returnObject.subfoldersCreatedCount++
+                    $destinationFolder = Join-Path -Path $Destination -ChildPath $relativeSubfolder
+                    Write-Verbose "[$functionName] File $file is in subfolder $relativeSubfolder. Ensuring destination folder $destinationFolder exists..."
+                    write-log -logFile $logFile -module $functionName -message "File $file is in subfolder $relativeSubfolder. Ensuring destination folder $destinationFolder exists..."
+                    if (-not (Test-Path -Path $destinationFolder))
+                    {
+                        Write-Host "Creating folder: $destinationFolder"
+                        write-log -logFile $logFile -module $functionName -message "Creating folder: $destinationFolder"
+                        New-Item -ItemType Directory -Path $destinationFolder -Force | Out-Null
+                        $returnObject.subfoldersCreated += $destinationFolder
+                        $returnObject.subfoldersCreatedCount++
+                    }
+                    $currentDestination = $destinationFolder
+                    write-log -logFile $logFile -module $functionName -message "Set current destination to $currentDestination"
                 }
-                $currentDestination = Join-Path -Path $Destination -ChildPath $subfolder
-                write-log -logFile $logFile -module $functionName -message "Set current destination to $currentDestination"                             
+                else
+                {
+                    Write-Host "No subfolder found for file: $file"
+                    $currentDestination = $Destination
+                    write-log -logFile $logFile -module $functionName -message "No subfolder found for file: $file. Set current destination to $currentDestination"
+                }
             }
             else
             {
                 Write-Host "No subfolder found for file: $file"
                 $currentDestination = $Destination
-                write-log -logFile $logFile -module $functionName -message "No subfolder found for file: $file. Set current destination to $currentDestination"                 
+                write-log -logFile $logFile -module $functionName -message "No subfolder found for file: $file. Set current destination to $currentDestination"
             }
         }
         else
         {
             $currentDestination = $Destination
-            write-log -logFile $logFile -module $functionName -message "No subfolder processing. Set current destination to $currentDestination"                 
-        }                           
+            write-log -logFile $logFile -module $functionName -message "No subfolder processing. Set current destination to $currentDestination"
+        }
         Write-Verbose "[$functionName] Processing file: $file"
         try
         {
             Copy-Item -Path $file -Destination $currentDestination -Force
-            Write-Verbose "[$functionName] Copied $file to $currentDestination"                 
-            write-log -logFile $logFile -module $functionName -message "Copied $file to $currentDestination"                            
-            $returnObject.filesCopied += $file          
-            $returnObject.filesCopiedCount++                
+            Write-Verbose "[$functionName] Copied $file to $currentDestination"
+            write-log -logFile $logFile -module $functionName -message "Copied $file to $currentDestination"
+            $returnObject.filesCopied += $file
+            $returnObject.filesCopiedCount++
         }
         catch
         {
             Write-Host "Failed to copy $file to $currentDestination"
             Write-Error $_
-            write-log -logFile $logFile -module $functionName -message "Failed to copy $file to $currentDestination. Error: $_" -logLevel "Error"                   
-            $returnObject.filesNotCopied += $file                       
-            $returnObject.filesNotCopiedCount++                         
+            write-log -logFile $logFile -module $functionName -message "Failed to copy $file to $currentDestination. Error: $_" -logLevel "Error"
+            $returnObject.filesNotCopied += $file
+            $returnObject.filesNotCopiedCount++
         }
     }
     if ($returnObject.filesNotCopiedCount -eq 0 -and $returnObject.filesToCopyCount -eq $returnObject.filesCopiedCount) 
