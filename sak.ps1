@@ -182,7 +182,7 @@ if (Test-Path $functionsFolder)
     foreach ($function in $functions)
     {
         Write-Verbose " [$scriptName] Importing function $function"
-        $syntaxCheck = Test-PowerShellSyntax -File $function -errorsOnly
+        $syntaxCheck = Test-PowerShellSyntax -File $function
         if ($syntaxCheck.HasErrors)
         {
             Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
