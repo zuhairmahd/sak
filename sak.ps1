@@ -4,6 +4,15 @@ param(
     [switch]$CheckRegKeyExists,
     [switch]$GetUninstallCommands,
     [switch]$KillGuiltyProcesses,
+    [switch]$ManageServices,
+    [string[]]$ServiceNames,
+    [string]$ServiceOperation,
+    [switch]$CreateZIPArchive,
+    [string]$ArchiveDestination,
+    [switch]$CheckProductInstallStatus,
+    [string]$ProductStatusExportPath,
+    [switch]$ExtractEmailAddresses,
+    [string]$EmailExportPath,
     [string]$ExportPath
 )
 
@@ -182,7 +191,7 @@ if (Test-Path $functionsFolder)
     foreach ($function in $functions)
     {
         Write-Verbose " [$scriptName] Importing function $function"
-        $syntaxCheck = Test-PowerShellSyntax -File $function -errorsOnly
+        $syntaxCheck = Test-PowerShellSyntax -File $function
         if ($syntaxCheck.HasErrors)
         {
             Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
@@ -239,6 +248,22 @@ $menuItems = @(
     @{
         name        = "KillGuiltyProcesses"
         description = "Close most common interfering processes before performing operations."
+    },
+    @{
+        name        = "ManageServices"
+        description = "Start, stop, restart, or check status of Windows services."
+    },
+    @{
+        name        = "CreateZIPArchive"
+        description = "Create a ZIP archive from a list of files."
+    },
+    @{
+        name        = "CheckProductInstallStatus"
+        description = "Check installation status and details for software by keyword."
+    },
+    @{
+        name        = "ExtractEmailAddresses"
+        description = "Extract all unique email addresses from a text file."
     }
 )
 #endregion define variables
@@ -274,6 +299,44 @@ if (-not $PSBoundParameters.Keys.Count)
         "KillGuiltyProcesses"
         {
             $KillGuiltyProcesses = $true
+        }
+        "ManageServices"
+        {
+            $ManageServices = $true
+            [array]$ServiceNames = Get-UserInput -message "Enter service name(s) to manage:" -inputType "array"
+            $operationChoices = @(
+                @{ name = "Start"; description = "Start the service(s)." },
+                @{ name = "Stop"; description = "Stop the service(s)." },
+                @{ name = "Restart"; description = "Restart the service(s)." },
+                @{ name = "Status"; description = "Check the current status of the service(s)." }
+            )
+            $ServiceOperation = Show-NumericMenu -choices $operationChoices -banner "Select the operation to perform:" -RequireEnter
+        }
+        "CreateZIPArchive"
+        {
+            $CreateZIPArchive = $true
+            [array]$inputString = Get-UserInput -message "Enter file path(s) to include in the ZIP:" -inputType "array"
+            $ArchiveDestination = Get-UserInput -message "Enter destination path for the ZIP file (e.g. C:\output\archive.zip):"
+        }
+        "CheckProductInstallStatus"
+        {
+            $CheckProductInstallStatus = $true
+            [array]$inputString = Get-UserInput -message "Enter keyword(s) to search for installed products:" -inputType "array"
+            $productStatusExportInput = Get-UserInput -message "Enter export path for results CSV (or leave blank to skip):"
+            if (-not [string]::IsNullOrWhiteSpace($productStatusExportInput))
+            {
+                $ProductStatusExportPath = $productStatusExportInput
+            }
+        }
+        "ExtractEmailAddresses"
+        {
+            $ExtractEmailAddresses = $true
+            $inputString = Get-UserInput -message "Enter the path to the text file to scan for email addresses:"
+            $emailExportInput = Get-UserInput -message "Enter export path to save email addresses (or leave blank to skip):"
+            if (-not [string]::IsNullOrWhiteSpace($emailExportInput))
+            {
+                $EmailExportPath = $emailExportInput
+            }
         }
         default
         {
@@ -467,9 +530,9 @@ if ($GetUninstallCommands)
             Write-Host "`n===================================================================" -ForegroundColor Green
         }
         # Collection for export
+        $exportData = @()
         if ($uninstallData.products.count -gt 1)
         {
-            $exportData = @()
             Write-Host "`n`n*** ALL MATCHING PRODUCTS ***" -ForegroundColor Cyan
             foreach ($product in $uninstallData.products)
             {
@@ -555,6 +618,56 @@ if ($GetUninstallCommands)
             Write-Host "End of product list" -ForegroundColor Cyan
             Write-Host "===================================================================" -ForegroundColor Cyan
         }
+        else
+        {
+            # Single product - build export object from the mostLikelyMatch already displayed above
+            $exportObj = [PSCustomObject]@{
+                ProductName             = $mostLikely.Name
+                Version                 = $mostLikely.Version
+                Publisher               = $mostLikely.Publisher
+                SizeMB                  = $mostLikely.SizeMB
+                InstallDate             = $mostLikely.InstallDate
+                RegistryPath            = $mostLikely.RegistryPath
+                RegistryKey             = $mostLikely.RegKey
+                InstallLocation         = $mostLikely.InstallLocation
+                IsMostLikely            = $true
+                RawUninstallCmd         = $mostLikely.UninstallCmd
+                UninstallFilePath       = $(if ($parsed)
+                    {
+                        $parsed.FilePath
+                    }
+                    else
+                    {
+                        $null
+                    })
+                UninstallArguments      = $(if ($parsed)
+                    {
+                        $parsed.Arguments
+                    }
+                    else
+                    {
+                        $null
+                    })
+                RawQuietUninstallCmd    = $mostLikely.QuietUninstall
+                QuietUninstallFilePath  = $(if ($parsedQuiet)
+                    {
+                        $parsedQuiet.FilePath
+                    }
+                    else
+                    {
+                        $null
+                    })
+                QuietUninstallArguments = $(if ($parsedQuiet)
+                    {
+                        $parsedQuiet.Arguments
+                    }
+                    else
+                    {
+                        $null
+                    })
+            }
+            $exportData += $exportObj
+        }
         # Export if requested
         if (-not [string]::IsNullOrWhiteSpace($ExportPath))
         {
@@ -569,6 +682,211 @@ if ($GetUninstallCommands)
                 Write-Host "`nFailed to export data: $_" -ForegroundColor Red
                 write-log -logFile $LogFile -Module $scriptName -Message "Failed to export data: $_" -LogLevel "Error"
                 $exitCode = 1
+            }
+        }
+    }
+}
+
+if ($ManageServices)
+{
+    if (-not $ServiceOperation)
+    {
+        Write-Host "No service operation specified. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "ManageServices: no operation specified." -LogLevel "Error"
+        $exitCode = 1
+    }
+    elseif (-not $ServiceNames -or $ServiceNames.Count -eq 0)
+    {
+        Write-Host "No service names provided. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "ManageServices: no service names provided." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else
+    {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Managing service(s): $($ServiceNames -join ', ') - Operation: $ServiceOperation" -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "ManageServices: Operation=$ServiceOperation, Services=$($ServiceNames -join ', ')" -LogLevel "Information"
+
+        $serviceResults = Invoke-ServiceManager -serviceNames $ServiceNames -Operation $ServiceOperation
+        foreach ($result in $serviceResults)
+        {
+            Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
+            Write-Host "Service:     $($result.DisplayName) ($($result.Name))"
+            if ($result.NotFound)
+            {
+                Write-Host "Status:      Not found" -ForegroundColor Red
+                write-log -logFile $LogFile -Module $scriptName -Message "Service '$($result.Name)' not found." -LogLevel "Warning"
+            }
+            else
+            {
+                Write-Host "Operation:   $($result.Operation)"
+                Write-Host "Status:      $($result.Status)"
+                Write-Host "New Status:  $($result.NewStatus)"
+                write-log -logFile $LogFile -Module $scriptName -Message "Service '$($result.Name)': Operation=$($result.Operation), Status=$($result.Status), NewStatus=$($result.NewStatus)" -LogLevel "Information"
+            }
+        }
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Service management complete." -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+    }
+}
+
+if ($CreateZIPArchive)
+{
+    if ([string]::IsNullOrWhiteSpace($ArchiveDestination))
+    {
+        Write-Host "No destination path specified for the ZIP archive. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "CreateZIPArchive: no destination path specified." -LogLevel "Error"
+        $exitCode = 1
+    }
+    elseif (-not $inputString -or $inputString.Count -eq 0)
+    {
+        Write-Host "No file paths provided for the ZIP archive. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "CreateZIPArchive: no file paths provided." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else
+    {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Creating ZIP archive at: $ArchiveDestination" -ForegroundColor Cyan
+        Write-Host "Files to include: $($inputString -join ', ')" -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "CreateZIPArchive: Destination=$ArchiveDestination, Files=$($inputString -join ', ')" -LogLevel "Information"
+
+        $zipResult = New-ZipPackage -FilePaths $inputString -DestinationPath $ArchiveDestination
+        if ($zipResult)
+        {
+            Write-Host "`nZIP archive created successfully: $ArchiveDestination" -ForegroundColor Green
+            write-log -logFile $LogFile -Module $scriptName -Message "ZIP archive created successfully: $ArchiveDestination" -LogLevel "Information"
+        }
+        else
+        {
+            Write-Host "`nFailed to create ZIP archive. Check log for details." -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "Failed to create ZIP archive: $ArchiveDestination" -LogLevel "Error"
+            $exitCode = 1
+        }
+    }
+}
+
+if ($CheckProductInstallStatus)
+{
+    if (-not $inputString -or $inputString.Count -eq 0)
+    {
+        Write-Host "No keywords provided to search for installed products. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: no keywords provided." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else
+    {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Checking installation status for keyword(s): $($inputString -join ', ')" -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: Keywords=$($inputString -join ', ')" -LogLevel "Information"
+
+        $statusData = Get-ProductInstallStatus -Products $inputString
+        if ($statusData.HasErrors)
+        {
+            Write-Host "Error checking product status: $($statusData.Message)" -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus error: $($statusData.Message)" -LogLevel "Error"
+            $exitCode = 1
+        }
+        elseif ($statusData.Products.Count -eq 0)
+        {
+            Write-Host "No installed products found matching keyword(s): $($inputString -join ', ')" -ForegroundColor Yellow
+            write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: no products found." -LogLevel "Information"
+        }
+        else
+        {
+            Write-Host "Found $($statusData.Products.Count) installed product(s):" -ForegroundColor Green
+            write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: found $($statusData.Products.Count) product(s)." -LogLevel "Information"
+
+            $productExportData = @()
+            foreach ($product in $statusData.Products)
+            {
+                Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
+                Write-Host "Product Name: $($product.Name)" -ForegroundColor White
+                Write-Host "Version:      $($product.Version)"
+                Write-Host "Publisher:    $($product.Publisher)"
+                Write-Host "Install Date: $($product.InstallDate)"
+                Write-Host "Size:         $($product.SizeMB) MB"
+                write-log -logFile $LogFile -Module $scriptName -Message "Product: $($product.Name), Version: $($product.Version), Publisher: $($product.Publisher)" -LogLevel "Information"
+
+                $productExportData += [PSCustomObject]@{
+                    ProductName = $product.Name
+                    Version     = $product.Version
+                    Publisher   = $product.Publisher
+                    InstallDate = $product.InstallDate
+                    SizeMB      = $product.SizeMB
+                }
+            }
+            Write-Host "`n===============================================================" -ForegroundColor Cyan
+
+            if (-not [string]::IsNullOrWhiteSpace($ProductStatusExportPath))
+            {
+                try
+                {
+                    $productExportData | Export-Csv -Path $ProductStatusExportPath -NoTypeInformation -Encoding UTF8
+                    Write-Host "Results exported to: $ProductStatusExportPath" -ForegroundColor Green
+                    write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: exported to $ProductStatusExportPath" -LogLevel "Information"
+                }
+                catch
+                {
+                    Write-Host "Failed to export results: $_" -ForegroundColor Red
+                    write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: export failed: $_" -LogLevel "Error"
+                    $exitCode = 1
+                }
+            }
+        }
+    }
+}
+
+if ($ExtractEmailAddresses)
+{
+    if ([string]::IsNullOrWhiteSpace($inputString) -or -not (Test-Path $inputString))
+    {
+        Write-Host "File not found or no path provided: '$inputString'" -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: file not found: '$inputString'" -LogLevel "Error"
+        $exitCode = 1
+    }
+    else
+    {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Extracting email addresses from: $inputString" -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: scanning file '$inputString'" -LogLevel "Information"
+
+        $fileLines = Get-Content -Path $inputString
+        $emails = Get-EmailAddresses -lines $fileLines
+
+        if ($emails -eq "No email addresses found." -or $emails.Count -eq 0)
+        {
+            Write-Host "No email addresses found in: $inputString" -ForegroundColor Yellow
+            write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: no addresses found." -LogLevel "Information"
+        }
+        else
+        {
+            Write-Host "Found $($emails.Count) unique email address(es):" -ForegroundColor Green
+            foreach ($email in $emails)
+            {
+                Write-Host "  $email"
+            }
+            write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: found $($emails.Count) address(es)." -LogLevel "Information"
+
+            if (-not [string]::IsNullOrWhiteSpace($EmailExportPath))
+            {
+                try
+                {
+                    $emails | Out-File -FilePath $EmailExportPath -Encoding UTF8
+                    Write-Host "`nEmail addresses saved to: $EmailExportPath" -ForegroundColor Green
+                    write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: saved to '$EmailExportPath'" -LogLevel "Information"
+                }
+                catch
+                {
+                    Write-Host "Failed to save email addresses: $_" -ForegroundColor Red
+                    write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: export failed: $_" -LogLevel "Error"
+                    $exitCode = 1
+                }
             }
         }
     }

@@ -71,10 +71,6 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
     {
         Write-Verbose "[$functionName] Searching for products with keyword: '$keyword'"
         write-log -logFile $LogFile -Module $scriptName -Message "Searching for products with keyword: '$keyword'" -LogLevel "Information"
-        #remove white spaces from the beginning and end of the keyword.
-        $keyword = $keyword.Trim()                      
-        Write-Verbose "[$functionName] Trimmed keyword: '$keyword'" 
-        write-log -logFile $LogFile -Module $scriptName -Message "Trimmed keyword: '$keyword'" -LogLevel "Verbose"          
         try
         {
             foreach ($key in $UninstallKeys)
@@ -139,6 +135,7 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
     
     Write-Verbose "[$functionName] Total products found before deduplication: $($allProducts.Count)"
     write-log -logFile $LogFile -Module $scriptName -Message "Total products found before deduplication: $($allProducts.Count)" -LogLevel "Information"
+    
     # Deduplicate products using UninstallCmd and RegKey as unique identifiers
     # Handle null/empty UninstallCmd values properly
     $uniqueProducts = @{}
@@ -178,51 +175,24 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
     }
     Write-Verbose "[$functionName] Removed $skippedDuplicates duplicate entries"
     write-log -logFile $LogFile -Module $scriptName -Message "Removed $skippedDuplicates duplicate entries. Unique products: $($uniqueProducts.Count)" -LogLevel "Information"
-    # Convert to array and find the most likely candidate
+    # Convert to array and find the most likely candidate based on largest size
     $uniqueProductArray = @($uniqueProducts.Values)
     if ($uniqueProductArray.Count -gt 0)
     {
-        # First, check if any product name matches exactly any of the keywords
-        $exactMatch = $null
-        foreach ($keyword in $keywords)
-        {
-            $exactMatch = $uniqueProductArray | Where-Object { $_.Name -ieq $keyword } | Select-Object -First 1
-            if ($exactMatch)
-            {
-                Write-Verbose "[$functionName] Found exact match for keyword '$keyword': '$($exactMatch.Name)'"
-                write-log -logFile $LogFile -Module $scriptName -Message "Found exact match for keyword '$keyword': '$($exactMatch.Name)'" -LogLevel "Information"
-                break
-            }
-        }
-        
-        # If exact match found, use it as the most likely candidate
-        # Otherwise, find product with largest size (most likely the main application)
-        $mostLikelyCandidate = if ($exactMatch)
-        {
-            Write-Verbose "[$functionName] Using exact match as most likely candidate"
-            write-log -logFile $LogFile -Module $scriptName -Message "Using exact match as most likely candidate" -LogLevel "Information"
-            $exactMatch
-        }
-        else
-        {
-            Write-Verbose "[$functionName] No exact match found, using largest size as criteria"
-            write-log -logFile $LogFile -Module $scriptName -Message "No exact match found, using largest size as criteria" -LogLevel "Information"
-            $uniqueProductArray | Sort-Object -Property SizeKB -Descending | Select-Object -First 1
-        }
-        
+        # Find product with largest size (most likely the main application)
+        $mostLikelyCandidate = $uniqueProductArray | Sort-Object -Property SizeKB -Descending | Select-Object -First 1
         if ($mostLikelyCandidate)
         {
             $mostLikelyCandidate.IsMostLikely = $true
             $uninstallationCommands.mostLikelyMatch = $mostLikelyCandidate
-            $matchReason = if ($exactMatch) { "exact match" } else { "largest size" }
-            Write-Verbose "[$functionName] Most likely candidate ($matchReason): '$($mostLikelyCandidate.Name)' (Size: $($mostLikelyCandidate.SizeMB)MB)"
-            write-log -logFile $LogFile -Module $scriptName -Message "Most likely candidate identified ($matchReason): '$($mostLikelyCandidate.Name)' (Size: $($mostLikelyCandidate.SizeMB)MB, Version: $($mostLikelyCandidate.Version))" -LogLevel "Information"
+            Write-Verbose "[$functionName] Most likely candidate: '$($mostLikelyCandidate.Name)' (Size: $($mostLikelyCandidate.SizeMB)MB)"
+            write-log -logFile $LogFile -Module $scriptName -Message "Most likely candidate identified: '$($mostLikelyCandidate.Name)' (Size: $($mostLikelyCandidate.SizeMB)MB, Version: $($mostLikelyCandidate.Version))" -LogLevel "Information"
         }
         
         # Sort products by size (largest first) for better organization
         $uniqueProductArray = $uniqueProductArray | Sort-Object -Property SizeKB -Descending
     }
-    $uninstallationCommands.products = $uniqueProductArray
+    $uninstallationCommands.products = @($uniqueProductArray)
     Write-Verbose "[$functionName] Returning total of $($uninstallationCommands.products.count) unique products found."        
     write-log -logFile $LogFile -Module $scriptName -Message "Returning total of $($uninstallationCommands.products.count) unique products. Most likely: '$($mostLikelyCandidate.Name)'" -LogLevel "Information"
     return $uninstallationCommands

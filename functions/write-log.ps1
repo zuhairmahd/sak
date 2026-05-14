@@ -126,18 +126,125 @@ function Write-Log()
             }
             
             # Use mutex for thread safety
-            $mutexName = "LogMutex_" + ($LogFile -replace '[\\/:*?"<>|]', '_')
-            $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+            $mutexName = "Global\LogMutex_" + ($LogFile -replace '[\\/:*?"<>|]', '_')
+            $mutex = $null
+            $streamWriter = $null
+            $fileStream = $null
             
             try
             {
+                $mutex = New-Object System.Threading.Mutex($false, $mutexName)
                 $mutex.WaitOne() | Out-Null
-                Add-Content -Path $LogFile -Value $logEntry -Encoding UTF8 -Force
+                
+                # Use StreamWriter with FileShare.ReadWrite to allow concurrent access
+                $fileStream = [System.IO.File]::Open(
+                    $LogFile,
+                    [System.IO.FileMode]::Append,
+                    [System.IO.FileAccess]::Write,
+                    [System.IO.FileShare]::ReadWrite
+                )
+                $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
+                $streamWriter.WriteLine($logEntry)
+                $streamWriter.Flush()
+            }
+            catch [System.IO.IOException]
+            {
+                # If file is still locked, retry with exponential backoff
+                $retryCount = 0
+                $maxRetries = 5
+                $success = $false
+                
+                while (-not $success -and $retryCount -lt $maxRetries)
+                {
+                    $retryCount++
+                    Start-Sleep -Milliseconds (100 * [Math]::Pow(2, $retryCount))
+                    
+                    try
+                    {
+                        $fileStream = [System.IO.File]::Open(
+                            $LogFile,
+                            [System.IO.FileMode]::Append,
+                            [System.IO.FileAccess]::Write,
+                            [System.IO.FileShare]::ReadWrite
+                        )
+                        $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
+                        $streamWriter.WriteLine($logEntry)
+                        $streamWriter.Flush()
+                        $success = $true
+                    }
+                    catch [System.IO.IOException]
+                    {
+                        if ($retryCount -ge $maxRetries)
+                        {
+                            Write-Warning "Failed to write to log after $maxRetries retries: $($_.Exception.Message)"
+                        }
+                    }
+                }
             }
             finally
             {
-                $mutex.ReleaseMutex()
-                $mutex.Dispose()
+                if ($streamWriter)
+                {
+                    try
+                    {
+                        $streamWriter.Close()
+                    }
+                    catch
+                    {
+                        Write-Warning "Write-Log: Failed to close StreamWriter: $($_.Exception.Message)"
+                    }
+
+                    try
+                    {
+                        $streamWriter.Dispose()
+                    }
+                    catch
+                    {
+                        Write-Warning "Write-Log: Failed to dispose StreamWriter: $($_.Exception.Message)"
+                    }
+                }
+
+                if ($fileStream)
+                {
+                    try
+                    {
+                        $fileStream.Close()
+                    }
+                    catch
+                    {
+                        Write-Warning "Write-Log: Failed to close FileStream: $($_.Exception.Message)"
+                    }
+
+                    try
+                    {
+                        $fileStream.Dispose()
+                    }
+                    catch
+                    {
+                        Write-Warning "Write-Log: Failed to dispose FileStream: $($_.Exception.Message)"
+                    }
+                }
+
+                if ($mutex)
+                {
+                    try
+                    {
+                        $mutex.ReleaseMutex()
+                    }
+                    catch
+                    {
+                        Write-Warning "Write-Log: Failed to release mutex: $($_.Exception.Message)"
+                    }
+
+                    try
+                    {
+                        $mutex.Dispose()
+                    }
+                    catch
+                    {
+                        Write-Warning "Write-Log: Failed to dispose mutex: $($_.Exception.Message)"
+                    }
+                }
             }
             
             # Write to console
@@ -232,6 +339,7 @@ function Write-Log()
         {
             $Context = "Unknown"
         }
+        
         if ($CMTraceFormat)
         {
             # True CMTrace format: 
@@ -261,18 +369,66 @@ function Write-Log()
         }
         
         # Use mutex for thread safety in concurrent scenarios
-        $mutexName = "LogMutex_" + ($LogFile -replace '[\\/:*?"<>|]', '_')
-        $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+        $mutexName = "Global\LogMutex_" + ($LogFile -replace '[\\/:*?"<>|]', '_')
+        $mutex = $null
+        $streamWriter = $null
+        $fileStream = $null
         
         try
         {
+            $mutex = New-Object System.Threading.Mutex($false, $mutexName)
             $mutex.WaitOne() | Out-Null
-            Add-Content -Path $LogFile -Value $logEntry -Encoding UTF8 -Force
+            
+            # Use StreamWriter with FileShare.ReadWrite to allow concurrent access
+            $fileStream = [System.IO.File]::Open(
+                $LogFile,
+                [System.IO.FileMode]::Append,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::ReadWrite
+            )
+            $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
+            $streamWriter.WriteLine($logEntry)
+            $streamWriter.Flush()
+        }
+        catch [System.IO.IOException]
+        {
+            # If file is still locked, retry with exponential backoff
+            $retryCount = 0
+            $maxRetries = 5
+            $success = $false
+            
+            while (-not $success -and $retryCount -lt $maxRetries)
+            {
+                $retryCount++
+                Start-Sleep -Milliseconds (100 * [Math]::Pow(2, $retryCount))
+                
+                try
+                {
+                    $fileStream = [System.IO.File]::Open(
+                        $LogFile,
+                        [System.IO.FileMode]::Append,
+                        [System.IO.FileAccess]::Write,
+                        [System.IO.FileShare]::ReadWrite
+                    )
+                    $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
+                    $streamWriter.WriteLine($logEntry)
+                    $streamWriter.Flush()
+                    $success = $true
+                }
+                catch [System.IO.IOException]
+                {
+                    if ($retryCount -ge $maxRetries)
+                    {
+                        Write-Warning "Failed to write to log after $maxRetries retries: $($_.Exception.Message)"
+                    }
+                }
+            }
         }
         finally
         {
-            $mutex.ReleaseMutex()
-            $mutex.Dispose()
+            if ($streamWriter) { $streamWriter.Close(); $streamWriter.Dispose() }
+            if ($fileStream) { $fileStream.Close(); $fileStream.Dispose() }
+            if ($mutex) { $mutex.ReleaseMutex(); $mutex.Dispose() }
         }
         
         # Write to appropriate PowerShell stream based on log level
