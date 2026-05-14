@@ -36,34 +36,34 @@ Get-Help about_ScriptBlocks
         [System.IO.FileInfo]$File,
         [switch]$ShowDetails
     )
-    
+
     $hasErrors = $false
     $errorCount = 0
     $warningCount = 0
     $errors = @()
-    
+
     try
     {
         # Method 1: Use AST parser for deeper syntax validation
         $tokens = $null
         $parseErrors = $null
         $content = Get-Content $File.FullName -Raw -ErrorAction Stop
-        
+
         $ast = [System.Management.Automation.Language.Parser]::ParseInput(
-            $content, 
-            [ref]$tokens, 
+            $content,
+            [ref]$tokens,
             [ref]$parseErrors
         )
-        
+
         # Check for parse errors
         if ($parseErrors -and $parseErrors.Count -gt 0)
         {
             $hasErrors = $true
             $errorCount = $parseErrors.Count
-            
+
             Write-Host "`nSyntax validation FAILED: $($File.FullName)" -ForegroundColor Red
             Write-Host "Found $($parseErrors.Count) parse error(s):" -ForegroundColor Red
-            
+
             foreach ($err in $parseErrors)
             {
                 $errors += $err
@@ -75,17 +75,17 @@ Get-Help about_ScriptBlocks
                 }
             }
         }
-        
+
         # Method 2: Validate brace/bracket/parenthesis matching
         # Note: We skip this check because the AST parser already validates matching delimiters
         # and this simple token-based approach produces false positives for delimiters inside strings
         # (e.g., $($variable) in expandable strings)
-        
+
         # Method 3: Try to actually compile the script block (catches runtime-detectable issues)
         try
         {
             $scriptBlock = [scriptblock]::Create($content)
-            
+
             # Check AST for common issues
             if ($ast)
             {
@@ -93,7 +93,7 @@ Get-Help about_ScriptBlocks
                 $functionDefs = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
                 $functionNames = $functionDefs | ForEach-Object { $_.Name }
                 $duplicates = $functionNames | Group-Object | Where-Object { $_.Count -gt 1 }
-                
+
                 if ($duplicates)
                 {
                     $warningCount += $duplicates.Count
@@ -102,7 +102,7 @@ Get-Help about_ScriptBlocks
                         Write-Host "  Warning: Duplicate function definition '$($dup.Name)' found $($dup.Count) times" -ForegroundColor Yellow
                     }
                 }
-                
+
                 # Check for unreachable code after return/exit/throw
                 $unreachableCode = $ast.FindAll({
                         param($node)
@@ -127,7 +127,7 @@ Get-Help about_ScriptBlocks
                         }
                         return $false
                     }, $true)
-                
+
                 if ($unreachableCode)
                 {
                     $warningCount += $unreachableCode.Count
@@ -144,10 +144,13 @@ Get-Help about_ScriptBlocks
             $errorCount++
             Write-Host "  ScriptBlock compilation error: $($_.Exception.Message)" -ForegroundColor Red
         }
-        
+
         if (-not $hasErrors)
         {
-            Write-Host "[OK] $($File.Name)" -ForegroundColor Green
+            if ($ShowDetails)
+            {
+                Write-Host "[OK] $($File.Name)" -ForegroundColor Green
+            }
         }
     }
     catch
@@ -157,7 +160,7 @@ Get-Help about_ScriptBlocks
         Write-Host "`nUnexpected error validating $($File.FullName):" -ForegroundColor Red
         Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
     }
-    
+
     return @{
         HasErrors    = $hasErrors
         ErrorCount   = $errorCount
