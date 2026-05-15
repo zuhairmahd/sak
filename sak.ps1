@@ -340,8 +340,8 @@ if (-not $PSBoundParameters.Keys.Count)
         }
         default
         {
-            Write-Host "No valid selection made. Exiting script."
-            write-log -logFile $LogFile -Module $scriptName -Message "No valid selection made. Exiting script." -LogLevel "Warning"
+            Write-Host "Exiting script."
+            write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
             exit 1
         }
     }
