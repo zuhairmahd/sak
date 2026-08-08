@@ -4,7 +4,8 @@ param(
     [switch]$CheckRegKeyExists,
     [switch]$GetUninstallCommands,
     [switch]$KillGuiltyProcesses,
-    [switch]$CleanupNetworkProfiles,
+    [switch]$CleanupNetworkProfiles,
+
     [switch]$ManageServices,
     [string[]]$ServiceNames,
     [string]$ServiceOperation,
@@ -715,9 +716,9 @@ if ($ExtractEmailAddresses) {
 
 if ($cleanupNetworkProfiles) {
     #make sure we are running as administrators
-    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-        Write-Host $adminMessage -ForegroundColor Red
-        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: keyword='$keyword'" -LogLevel "Information"
+        Write-Host $AdminMessage -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: script not run as administrator. keyword='$inputString'" -LogLevel "Error"
+        write-log -logFile $LogFile -FinishLogging
         write-log -logFile $LogFile -finishLogging
         exit 1
     }
