@@ -1,28 +1,68 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = "Menu")]
 param(
-    [string]$inputString,
+    # No parameters — runs interactive menu
+    [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
     [switch]$CheckRegKeyExists,
+
+    [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
     [switch]$GetUninstallCommands,
+
+    [Parameter(ParameterSetName = "KillGuiltyProcesses", Mandatory = $true)]
     [switch]$KillGuiltyProcesses,
+
+    [Parameter(ParameterSetName = "CleanupNetworkProfiles", Mandatory = $true)]
     [switch]$CleanupNetworkProfiles,
 
+    [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [switch]$ManageServices,
+    [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [string[]]$ServiceNames,
+    [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
+    [ValidateSet("Start", "Stop", "Restart", "Status")]
     [string]$ServiceOperation,
+
+    [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [switch]$CreateZIPArchive,
+    [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [string]$ArchiveDestination,
+
+    [Parameter(ParameterSetName = "CheckProductInstallStatus", Mandatory = $true)]
     [switch]$CheckProductInstallStatus,
+    [Parameter(ParameterSetName = "CheckProductInstallStatus")]
     [string]$ProductStatusExportPath,
+
+    [Parameter(ParameterSetName = "ExtractEmailAddresses", Mandatory = $true)]
     [switch]$ExtractEmailAddresses,
+    [Parameter(ParameterSetName = "ExtractEmailAddresses")]
     [string]$EmailExportPath,
+
+    [Parameter(ParameterSetName = "GetUninstallCommands")]
     [string]$ExportPath,
+
+    [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [switch]$DownloadFileFromURL,
+    [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [string]$DownloadURL,
+    [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [string]$DownloadDestination,
+
+    [Parameter(ParameterSetName = "GetLocalComputerInfo", Mandatory = $true)]
     [switch]$GetLocalComputerInfo,
+
+    [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
     [switch]$WhoisLookup,
+    [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
     [string]$WhoisTarget,
-    [string]$WhoisServer
+    [Parameter(ParameterSetName = "WhoisLookup")]
+    [string]$WhoisServer,
+
+    # Shared input across sets that need a file path or keyword(s)
+    [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
+    [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
+    [Parameter(ParameterSetName = "ExtractEmailAddresses", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CleanupNetworkProfiles")]
+    [string]$inputString
 )
 
 #region helper functions
@@ -325,8 +365,8 @@ if (-not $PSBoundParameters.Keys.Count) {
         }
         "WhoisLookup" {
             $WhoisLookup = $true
-            $WhoisTarget = Get-UserInput -message "Enter the domain name or IP address to look up:"
-            $whoisServerInput = Get-UserInput -message "Enter a WHOIS server to use (or leave blank to use the default):"
+            $WhoisTarget = if ($inputString) { $inputString } else { Get-UserInput -message "Enter a domain name or IP address for WHOIS lookup:" }
+            $whoisServerInput = if ($WhoisServer) { $WhoisServer } else { Get-UserInput -message "Enter a WHOIS server (or leave blank for default)" }
             if (-not [string]::IsNullOrWhiteSpace($whoisServerInput)) {
                 $WhoisServer = $whoisServerInput
             }
@@ -819,13 +859,51 @@ if ($WhoisLookup) {
             $whoisParams.WhoisServer = $WhoisServer
         }
         $whoisResult = Get-WhoisInfo @whoisParams
-        if ($whoisResult) {
-            Write-Host "`n$whoisResult" -ForegroundColor White
-            write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: result received for '$WhoisTarget'." -LogLevel "Information"
-        }
-        else {
+        if (-not $whoisResult) {
             Write-Host "`nNo WHOIS data returned for: $WhoisTarget" -ForegroundColor Yellow
             write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: no data returned for '$WhoisTarget'." -LogLevel "Warning"
+        }
+        elseif ($whoisResult.Error) {
+            Write-Host "`nWHOIS lookup failed: $($whoisResult.Error)" -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: error for '$WhoisTarget': $($whoisResult.Error)" -LogLevel "Error"
+            $exitCode = 1
+        }
+        else {
+            Write-Host ""
+            Write-Host "  Query       : $($whoisResult.Query)" -ForegroundColor White
+            Write-Host "  WHOIS Server: $($whoisResult.WhoisServerUsed)" -ForegroundColor White
+            Write-Host ""
+
+            $metaKeys = @('Query', 'WhoisServerUsed', 'RawText', 'Notices', 'Error')
+            $dataKeys = $whoisResult.Keys | Where-Object { $_ -notin $metaKeys } | Sort-Object
+
+            foreach ($key in $dataKeys) {
+                $val = $whoisResult[$key]
+                if ($val -is [array]) {
+                    Write-Host "  $key" -ForegroundColor Cyan -NoNewline
+                    Write-Host ":"
+                    foreach ($item in $val) {
+                        Write-Host "      $item" -ForegroundColor White
+                    }
+                }
+                else {
+                    Write-Host "  $key" -ForegroundColor Cyan -NoNewline
+                    Write-Host ": $val" -ForegroundColor White
+                }
+            }
+
+            if ($whoisResult.Notices) {
+                Write-Host ""
+                Write-Host "  --- Notices ---" -ForegroundColor DarkGray
+                if ($whoisResult.Notices.LastUpdate) {
+                    Write-Host "  Last DB Update : $($whoisResult.Notices.LastUpdate)" -ForegroundColor DarkGray
+                }
+                if ($whoisResult.Notices.StatusCodesInfoUrl) {
+                    Write-Host "  Status Codes   : $($whoisResult.Notices.StatusCodesInfoUrl)" -ForegroundColor DarkGray
+                }
+            }
+
+            write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: result received for '$WhoisTarget'." -LogLevel "Information"
         }
         Write-Host "`n===============================================================" -ForegroundColor Cyan
     }
