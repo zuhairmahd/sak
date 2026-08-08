@@ -24,15 +24,15 @@ function Get-NetworkProfiles {
     )
 
     $regPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
-    $profiles = [System.Collections.Generic.List[object]]::new()
+    $profiles = [System.Collections.Generic.List[object]]::new()
 
     #get all subkeys
     $subKeys = Get-ChildItem -Path $regPath
     foreach ($subKey in $subKeys) {
         #get the profile name and category
-        $props = Get-ItemProperty -Path $subKey.PSPath
-        $profileName = $props.ProfileName
-        $category = $props.Category
+        $props = Get-ItemProperty -Path $subKey.PSPath
+        $profileName = $props.ProfileName
+        $category = $props.Category
         switch ($category) {
             0 { $categoryName = "Public" }
             1 { $categoryName = "Private" }
@@ -47,7 +47,7 @@ function Get-NetworkProfiles {
             Category    = $categoryName
         }
         if (-not $keyword -or $profileName -like "*$keyword*") {
-            [void]$profiles.Add($profileObject)
+            [void]$profiles.Add($profileObject)
         }
     }
     return $profiles
