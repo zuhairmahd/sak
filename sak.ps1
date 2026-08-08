@@ -4,6 +4,7 @@ param(
     [switch]$CheckRegKeyExists,
     [switch]$GetUninstallCommands,
     [switch]$KillGuiltyProcesses,
+    [switch]$cleanupNetworkProfiles,
     [switch]$ManageServices,
     [string[]]$ServiceNames,
     [string]$ServiceOperation,
@@ -235,8 +236,13 @@ $menuItems = @(
     @{
         name        = "ExtractEmailAddresses"
         description = "Extract all unique email addresses from a text file."
+    },
+    @{
+        name        = "CleanupNetworkProfiles"
+        description = "Remove network profiles matching a keyword from the system."
     }
 )
+$AdminMessage = "You must be an administrator to perform this operation. Please run the script as an administrator."
 #endregion define variables
 
 write-log -logFile $logFile -StartLogging
@@ -288,6 +294,16 @@ if (-not $PSBoundParameters.Keys.Count) {
             if (-not [string]::IsNullOrWhiteSpace($emailExportInput)) {
                 $EmailExportPath = $emailExportInput
             }
+        }
+        "CleanupNetworkProfiles" {
+            if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+                Write-Host $adminMessage -ForegroundColor Red
+                write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: script not run as administrator." -LogLevel "Error"
+                write-log -logFile $LogFile -Finishlogging
+                exit 1
+            }
+            $cleanupNetworkProfiles = $true
+            $inputString = Get-UserInput -message "Enter the keyword to match network profiles for cleanup.`nPress enter to match all profiles"
         }
         default {
             Write-Host "Exiting script."
@@ -696,6 +712,54 @@ if ($ExtractEmailAddresses) {
         }
     }
 }
+
+if ($cleanupNetworkProfiles) {
+    #make sure we are running as administrators
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Host $adminMessage -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: keyword='$keyword'" -LogLevel "Information"
+        write-log -logFile $LogFile -finishLogging
+        exit 1
+    }
+    Write-Host "Getting all network profiles..."
+    $allProfiles = Get-NetworkProfiles -keyWord $inputString
+
+    if ($null -eq $allProfiles -or $allProfiles.Count -eq 0) {
+        Write-Host "No network profiles found on this system." -ForegroundColor Yellow
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: no profiles found." -LogLevel "Warning"
+    }
+    else {
+        Write-Host "Found $($allProfiles.Count) network profile(s)."
+
+        $totalProfileCount = $allProfiles.Count
+        $deletedProfiles = 0
+        foreach ($networkProfile in $allProfiles) {
+            Write-Host "  Profile Name: $($networkProfile.ProfileName), Category: $($networkProfile.Category)"
+            write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: removing profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid)), profile path: $($networkProfile.profilePath), Category: $($networkProfile.Category)" -LogLevel "Information"
+            $choice = Read-Host -Prompt "Are you sure you want to remove this profile? (Y/N)"
+            while ($choice -notin @('Y', 'N', 'y', 'n')) {
+                Write-Host "Invalid choice. Please enter 'Y' or 'N'." -ForegroundColor Yellow
+                [console]::beep(1000, 300)
+                $choice = Read-Host -Prompt "Are you sure you want to remove this profile? (Y/N)"
+            }
+            if ($choice -eq 'Y' -or $choice -eq 'y') {
+                Write-Host "Removing network profile: $($networkProfile.ProfileName) (GUID: $($networkProfile.profileGuid))" -ForegroundColor Green
+                Remove-Item -Path $networkProfile.profilePath -Recurse -Force
+                $deletedProfiles++
+                Write-Host "Network profile $($networkProfile.ProfileName) removed successfully." -ForegroundColor Green
+                write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: removed profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid))" -LogLevel "Information"
+            }
+            else {
+                Write-Host "Skipping removal of network profile: $($networkProfile.ProfileName) (GUID: $($networkProfile.profileGuid))" -ForegroundColor Yellow
+                write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: skipped removal of profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid))" -LogLevel "Information"
+            }
+        }
+        Write-Host "`nNetwork profile cleanup completed."
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: cleanup completed." -LogLevel "Information"
+    }
+    Write-Host "`nSummary: Total profiles found: $totalProfileCount, Profiles deleted: $deletedProfiles" -ForegroundColor Cyan
+}
+
 
 write-log -logFile $logFile -FinishLogging
 exit $exitCode
