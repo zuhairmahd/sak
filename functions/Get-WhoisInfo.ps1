@@ -1,5 +1,4 @@
-function Get-WhoisInfo()
-{
+function Get-WhoisInfo() {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -11,20 +10,10 @@ function Get-WhoisInfo()
     )
 
     $functionName = $MyInvocation.MyCommand.Name
-    # Resolve log file from common scopes with a safe fallback in case bootstrap didn't set it
-    try
-    {
-        if (-not (Get-Variable -Name LogFile -Scope 0 -ErrorAction SilentlyContinue))
-        {
-            if (Get-Variable -Name LogFile -Scope Script -ErrorAction SilentlyContinue) { $LogFile = $Script:LogFile }
-            elseif (Get-Variable -Name LogFile -Scope Global -ErrorAction SilentlyContinue) { $LogFile = $Global:LogFile }
-            else { $LogFile = Join-Path $env:TEMP 'Autopilot.log' }
-        }
-    }
-    catch { $LogFile = Join-Path $env:TEMP 'Autopilot.log' }
+
+    #region Helper functions
     # Helper: simple check if input is an IP address
-    function Test-IsIPAddress()
-    {
+    function Test-IsIPAddress() {
         [CmdletBinding()]
         param(
             [string]$InputString
@@ -34,8 +23,7 @@ function Get-WhoisInfo()
     }
 
     # Helper: perform a WHOIS query against a server
-    function Invoke-WhoisQuery()
-    {
+    function Invoke-WhoisQuery() {
         [CmdletBinding()]
         param(
             [Parameter(Mandatory = $true)][string]$Server,
@@ -47,12 +35,10 @@ function Get-WhoisInfo()
         $stream = $null
         $reader = $null
         $writer = $null
-        try
-        {
+        try {
             $client = New-Object System.Net.Sockets.TcpClient
             $ar = $client.BeginConnect($Server, 43, $null, $null)
-            if (-not $ar.AsyncWaitHandle.WaitOne($Timeout * 1000, $false))
-            {
+            if (-not $ar.AsyncWaitHandle.WaitOne($Timeout * 1000, $false)) {
                 throw "WHOIS connection to $Server timed out after $Timeout seconds"
             }
             $client.EndConnect($ar) | Out-Null
@@ -66,8 +52,7 @@ function Get-WhoisInfo()
             [void]$writer.WriteLine($Query)
             $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::ASCII)
             $responseBuilder = New-Object System.Text.StringBuilder
-            while (-not $reader.EndOfStream)
-            {
+            while (-not $reader.EndOfStream) {
                 $line = $reader.ReadLine()
                 [void]$responseBuilder.AppendLine($line)
             }
@@ -75,13 +60,11 @@ function Get-WhoisInfo()
             Write-Log -LogFile $LogFile -Module $functionName -Message ("Received WHOIS response from $Server (length: $($resp.Length))")
             return $resp
         }
-        catch
-        {
+        catch {
             Write-Log -LogFile $LogFile -Module $functionName -Message ("WHOIS query to $Server failed: $($_.Exception.Message)") -LogLevel "Error"
             return $null
         }
-        finally
-        {
+        finally {
             if ($reader) { $reader.Dispose() }
             if ($writer) { $writer.Dispose() }
             if ($stream) { $stream.Dispose() }
@@ -90,22 +73,17 @@ function Get-WhoisInfo()
     }
 
     # Helper: determine default WHOIS server for domains via IANA, with fallback to whois-servers.net convention
-    function Get-WhoisServerForDomain()
-    {
+    function Get-WhoisServerForDomain() {
         [CmdletBinding()]
         param([string]$Domain)
-        try
-        {
+        try {
             $tld = ($Domain -split '\\.')[-1]
             if (-not $tld) { return $null }
             $ianaResp = Invoke-WhoisQuery -Server 'whois.iana.org' -Query $tld -Timeout $TimeoutSeconds
-            if ($null -ne $ianaResp)
-            {
-                foreach ($l in ($ianaResp -split "`n"))
-                {
+            if ($null -ne $ianaResp) {
+                foreach ($l in ($ianaResp -split "`n")) {
                     $line = $l.Trim()
-                    if ($line -match '^(?i)whois:\s*(?<srv>[^\s]+)')
-                    {
+                    if ($line -match '^(?i)whois:\s*(?<srv>[^\s]+)') {
                         return $Matches['srv'].Trim()
                     }
                 }
@@ -113,55 +91,47 @@ function Get-WhoisInfo()
             # Fallback pattern used broadly by clients
             return ("{0}.whois-servers.net" -f $tld)
         }
-        catch
-        {
+        catch {
             Write-Log -LogFile $LogFile -Module $functionName -Message ("Failed to resolve WHOIS server via IANA: $($_.Exception.Message)") -LogLevel "Warning"
             return $null
         }
     }
 
     # Helper: resolve referral if present
-    function Resolve-WhoisReferral()
-    {
+    function Resolve-WhoisReferral() {
         [CmdletBinding()]
         param([string]$Response, [string]$OriginalQuery, [string]$CurrentServer)
         if (-not $Response) { return @($Response, $CurrentServer) }
         $referralServer = $null
-        foreach ($l in ($Response -split "`n"))
-        {
+        foreach ($l in ($Response -split "`n")) {
             $line = $l.Trim()
-            if ($line -match '^(?i)ReferralServer:\s*whois://(?<srv>[^\s/:]+)')
-            {
+            if ($line -match '^(?i)ReferralServer:\s*whois://(?<srv>[^\s/:]+)') {
                 $referralServer = $Matches['srv']
                 break
             }
-            if (-not $referralServer -and $line -match '^(?i)whois:\s*(?<srv>[^\s]+)$')
-            {
+            if (-not $referralServer -and $line -match '^(?i)whois:\s*(?<srv>[^\s]+)$') {
                 # Some registries use just 'whois: host'
                 $referralServer = $Matches['srv']
                 break
             }
         }
-        if ($referralServer)
-        {
+        if ($referralServer) {
             Write-Log -LogFile $LogFile -Module $functionName -Message ("Following WHOIS referral to $referralServer for '$OriginalQuery'") -LogLevel "Information"
             $refResp = Invoke-WhoisQuery -Server $referralServer -Query $OriginalQuery -Timeout $TimeoutSeconds
             if ($refResp) { return @($refResp, $referralServer) }
         }
         return @($Response, $CurrentServer)
     }
+    #endregion helper functions
 
     # Decide server and perform query
     $serverToUse = $WhoisServer
     $isIP = Test-IsIPAddress -InputString $DomainNameOrIPAddress
-    if (-not $serverToUse)
-    {
-        if ($isIP)
-        {
+    if (-not $serverToUse) {
+        if ($isIP) {
             $serverToUse = 'whois.arin.net'
         }
-        else
-        {
+        else {
             $serverToUse = Get-WhoisServerForDomain -Domain $DomainNameOrIPAddress
             if (-not $serverToUse) { $serverToUse = 'whois.verisign-grs.com' }
         }
@@ -172,16 +142,14 @@ function Get-WhoisInfo()
     $raw = Invoke-WhoisQuery -Server $serverToUse -Query $DomainNameOrIPAddress -Timeout $TimeoutSeconds
     $usedServer = $serverToUse
     $followed = Resolve-WhoisReferral -Response $raw -OriginalQuery $DomainNameOrIPAddress -CurrentServer $usedServer
-    if ($followed -and $followed.Count -eq 2)
-    {
+    if ($followed -and $followed.Count -eq 2) {
         $raw = $followed[0]
         $usedServer = $followed[1]
     }
 
-    if (-not $raw)
-    {
+    if (-not $raw) {
         Write-Log -LogFile $LogFile -Module $functionName -Message ("WHOIS lookup failed or returned no data for '$DomainNameOrIPAddress'") -LogLevel "Error"
-        return @{ 
+        return @{
             Query           = $DomainNameOrIPAddress
             WhoisServerUsed = $usedServer
             Error           = "Lookup failed or returned no data"
@@ -207,8 +175,7 @@ function Get-WhoisInfo()
     $inRegistryInfo = $false
 
     $lines = $raw -split "`n"
-    foreach ($l in $lines)
-    {
+    foreach ($l in $lines) {
         $lineRaw = $l
         $line = $l.Trim()
 
@@ -219,24 +186,21 @@ function Get-WhoisInfo()
 
         # NOTICE block
         if ($line -match '^(?i)NOTICE:') { $inNotice = $true }
-        if ($inNotice)
-        {
+        if ($inNotice) {
             if (-not [string]::IsNullOrWhiteSpace($line)) { [void]$noticeBuilder.AppendLine($lineRaw.TrimEnd()) } else { $inNotice = $false }
             continue
         }
 
         # TERMS OF USE block
         if ($line -match '^(?i)TERMS OF USE:') { $inTerms = $true }
-        if ($inTerms)
-        {
+        if ($inTerms) {
             if (-not [string]::IsNullOrWhiteSpace($line)) { [void]$termsBuilder.AppendLine($lineRaw.TrimEnd()) } else { $inTerms = $false }
             continue
         }
 
         # Registry info block
         if ($line -match '^(?i)The Registry database contains ONLY') { $inRegistryInfo = $true }
-        if ($inRegistryInfo)
-        {
+        if ($inRegistryInfo) {
             if (-not [string]::IsNullOrWhiteSpace($line)) { [void]$registryInfoBuilder.AppendLine($lineRaw.TrimEnd()) } else { $inRegistryInfo = $false }
             continue
         }
@@ -258,8 +222,7 @@ function Get-WhoisInfo()
     }
 
     # Materialize deduped
-    foreach ($k in $kv.Keys)
-    {
+    foreach ($k in $kv.Keys) {
         $vals = $kv[$k]
         if ($vals.Count -eq 1) { $result[$k] = $vals[0] }
         else { $result[$k] = $vals.ToArray() }

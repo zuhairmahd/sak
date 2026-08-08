@@ -1,21 +1,68 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = "Menu")]
 param(
-    [string]$inputString,
+    # No parameters — runs interactive menu
+    [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
     [switch]$CheckRegKeyExists,
+
+    [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
     [switch]$GetUninstallCommands,
+
+    [Parameter(ParameterSetName = "KillGuiltyProcesses", Mandatory = $true)]
     [switch]$KillGuiltyProcesses,
+
+    [Parameter(ParameterSetName = "CleanupNetworkProfiles", Mandatory = $true)]
     [switch]$CleanupNetworkProfiles,
 
+    [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [switch]$ManageServices,
+    [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [string[]]$ServiceNames,
+    [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
+    [ValidateSet("Start", "Stop", "Restart", "Status")]
     [string]$ServiceOperation,
+
+    [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [switch]$CreateZIPArchive,
+    [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [string]$ArchiveDestination,
+
+    [Parameter(ParameterSetName = "CheckProductInstallStatus", Mandatory = $true)]
     [switch]$CheckProductInstallStatus,
+    [Parameter(ParameterSetName = "CheckProductInstallStatus")]
     [string]$ProductStatusExportPath,
+
+    [Parameter(ParameterSetName = "ExtractEmailAddresses", Mandatory = $true)]
     [switch]$ExtractEmailAddresses,
+    [Parameter(ParameterSetName = "ExtractEmailAddresses")]
     [string]$EmailExportPath,
-    [string]$ExportPath
+
+    [Parameter(ParameterSetName = "GetUninstallCommands")]
+    [string]$ExportPath,
+
+    [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
+    [switch]$DownloadFileFromURL,
+    [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
+    [string]$DownloadURL,
+    [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
+    [string]$DownloadDestination,
+
+    [Parameter(ParameterSetName = "GetLocalComputerInfo", Mandatory = $true)]
+    [switch]$GetLocalComputerInfo,
+
+    [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
+    [switch]$WhoisLookup,
+    [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
+    [string]$WhoisTarget,
+    [Parameter(ParameterSetName = "WhoisLookup")]
+    [string]$WhoisServer,
+
+    # Shared input across sets that need a file path or keyword(s)
+    [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
+    [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
+    [Parameter(ParameterSetName = "ExtractEmailAddresses", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CleanupNetworkProfiles")]
+    [string]$inputString
 )
 
 #region helper functions
@@ -239,6 +286,18 @@ $menuItems = @(
         description = "Extract all unique email addresses from a text file."
     },
     @{
+        name        = "DownloadFileFromURL"
+        description = "Download a file from a URL to a local destination."
+    },
+    @{
+        name        = "GetLocalComputerInfo"
+        description = "Retrieve session type, client OS, name, and IP address of this computer."
+    },
+    @{
+        name        = "WhoisLookup"
+        description = "Perform a WHOIS lookup on a domain name or IP address."
+    },
+    @{
         name        = "CleanupNetworkProfiles"
         description = "Remove network profiles matching a keyword from the system."
     }
@@ -296,6 +355,22 @@ if (-not $PSBoundParameters.Keys.Count) {
                 $EmailExportPath = $emailExportInput
             }
         }
+        "DownloadFileFromURL" {
+            $DownloadFileFromURL = $true
+            $DownloadURL = Get-UserInput -message "Enter the URL to download the file from:"
+            $DownloadDestination = Get-UserInput -message "Enter the full local path to save the file (e.g. C:\Downloads\file.zip):"
+        }
+        "GetLocalComputerInfo" {
+            $GetLocalComputerInfo = $true
+        }
+        "WhoisLookup" {
+            $WhoisLookup = $true
+            $WhoisTarget = if ($inputString) { $inputString } else { Get-UserInput -message "Enter a domain name or IP address for WHOIS lookup:" }
+            $whoisServerInput = if ($WhoisServer) { $WhoisServer } else { Get-UserInput -message "Enter a WHOIS server (or leave blank for default)" }
+            if (-not [string]::IsNullOrWhiteSpace($whoisServerInput)) {
+                $WhoisServer = $whoisServerInput
+            }
+        }
         "CleanupNetworkProfiles" {
             if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
                 Write-Host $adminMessage -ForegroundColor Red
@@ -308,6 +383,7 @@ if (-not $PSBoundParameters.Keys.Count) {
         }
         default {
             Write-Host "Exiting script."
+            write-log -logFile $logFile -FinishLogging
             write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
             exit 1
         }
@@ -711,6 +787,125 @@ if ($ExtractEmailAddresses) {
                 }
             }
         }
+    }
+}
+
+if ($DownloadFileFromURL) {
+    if ([string]::IsNullOrWhiteSpace($DownloadURL) -or [string]::IsNullOrWhiteSpace($DownloadDestination)) {
+        Write-Host "URL or destination path not provided. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: URL or destination not provided." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Downloading file from: $DownloadURL" -ForegroundColor Cyan
+        Write-Host "Saving to:             $DownloadDestination" -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: URL=$DownloadURL, Destination=$DownloadDestination" -LogLevel "Information"
+
+        $downloadResult = Get-FileFromURL -url $DownloadURL -destination $DownloadDestination
+        if ($downloadResult) {
+            Write-Host "`nFile downloaded successfully to: $DownloadDestination" -ForegroundColor Green
+            write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: file saved to '$DownloadDestination'." -LogLevel "Information"
+        }
+        else {
+            Write-Host "`nFailed to download file. Check log for details." -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: download failed." -LogLevel "Error"
+            $exitCode = 1
+        }
+    }
+}
+
+if ($GetLocalComputerInfo) {
+    Write-Host "`n===============================================================" -ForegroundColor Cyan
+    Write-Host "Retrieving local computer information..." -ForegroundColor Cyan
+    Write-Host "===============================================================" -ForegroundColor Cyan
+    write-log -logFile $LogFile -Module $scriptName -Message "GetLocalComputerInfo: retrieving computer info." -LogLevel "Information"
+
+    $computerInfo = Get-LocalComputerInfo
+    if ($computerInfo.ErrorOccurred) {
+        Write-Host "Errors occurred while retrieving computer info:" -ForegroundColor Yellow
+        foreach ($errMsg in $computerInfo.ErrorMessages) {
+            Write-Host "  - $errMsg" -ForegroundColor Yellow
+        }
+        write-log -logFile $LogFile -Module $scriptName -Message "GetLocalComputerInfo: errors occurred: $($computerInfo.ErrorMessages -join '; ')" -LogLevel "Warning"
+    }
+    Write-Host "`nSession Type:    $($computerInfo.SessionType)"
+    Write-Host "Server Name:     $($computerInfo.ServerName)"
+    Write-Host "Client Name:     $($computerInfo.ClientName)"
+    Write-Host "Client OS:       $($computerInfo.ClientOS)"
+    Write-Host "Client IP:       $($computerInfo.ClientIPAddress)"
+    if ($computerInfo.ClientVersion) {
+        Write-Host "Client Version:  $($computerInfo.ClientVersion)"
+    }
+    Write-Host "IGEL Client:     $($computerInfo.IsIGEL)"
+    Write-Host "`n===============================================================" -ForegroundColor Cyan
+    write-log -logFile $LogFile -Module $scriptName -Message "GetLocalComputerInfo: SessionType=$($computerInfo.SessionType), Server=$($computerInfo.ServerName), Client=$($computerInfo.ClientName), OS=$($computerInfo.ClientOS), IP=$($computerInfo.ClientIPAddress)" -LogLevel "Information"
+}
+
+if ($WhoisLookup) {
+    if ([string]::IsNullOrWhiteSpace($WhoisTarget)) {
+        Write-Host "No domain name or IP address provided. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: no target provided." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "WHOIS lookup for: $WhoisTarget" -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: target='$WhoisTarget', server='$WhoisServer'" -LogLevel "Information"
+        $whoisParams = @{ DomainNameOrIPAddress = $WhoisTarget }
+        if (-not [string]::IsNullOrWhiteSpace($WhoisServer)) {
+            $whoisParams.WhoisServer = $WhoisServer
+        }
+        $whoisResult = Get-WhoisInfo @whoisParams
+        if (-not $whoisResult) {
+            Write-Host "`nNo WHOIS data returned for: $WhoisTarget" -ForegroundColor Yellow
+            write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: no data returned for '$WhoisTarget'." -LogLevel "Warning"
+        }
+        elseif ($whoisResult.Error) {
+            Write-Host "`nWHOIS lookup failed: $($whoisResult.Error)" -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: error for '$WhoisTarget': $($whoisResult.Error)" -LogLevel "Error"
+            $exitCode = 1
+        }
+        else {
+            Write-Host ""
+            Write-Host "  Query       : $($whoisResult.Query)" -ForegroundColor White
+            Write-Host "  WHOIS Server: $($whoisResult.WhoisServerUsed)" -ForegroundColor White
+            Write-Host ""
+
+            $metaKeys = @('Query', 'WhoisServerUsed', 'RawText', 'Notices', 'Error')
+            $dataKeys = $whoisResult.Keys | Where-Object { $_ -notin $metaKeys } | Sort-Object
+
+            foreach ($key in $dataKeys) {
+                $val = $whoisResult[$key]
+                if ($val -is [array]) {
+                    Write-Host "  $key" -ForegroundColor Cyan -NoNewline
+                    Write-Host ":"
+                    foreach ($item in $val) {
+                        Write-Host "      $item" -ForegroundColor White
+                    }
+                }
+                else {
+                    Write-Host "  $key" -ForegroundColor Cyan -NoNewline
+                    Write-Host ": $val" -ForegroundColor White
+                }
+            }
+
+            if ($whoisResult.Notices) {
+                Write-Host ""
+                Write-Host "  --- Notices ---" -ForegroundColor DarkGray
+                if ($whoisResult.Notices.LastUpdate) {
+                    Write-Host "  Last DB Update : $($whoisResult.Notices.LastUpdate)" -ForegroundColor DarkGray
+                }
+                if ($whoisResult.Notices.StatusCodesInfoUrl) {
+                    Write-Host "  Status Codes   : $($whoisResult.Notices.StatusCodesInfoUrl)" -ForegroundColor DarkGray
+                }
+            }
+
+            write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: result received for '$WhoisTarget'." -LogLevel "Information"
+        }
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
     }
 }
 
