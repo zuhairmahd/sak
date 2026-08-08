@@ -4,7 +4,7 @@ param(
     [switch]$CheckRegKeyExists,
     [switch]$GetUninstallCommands,
     [switch]$KillGuiltyProcesses,
-    [switch]$cleanupNetworkProfiles,
+    [switch]$CleanupNetworkProfiles,
     [switch]$ManageServices,
     [string[]]$ServiceNames,
     [string]$ServiceOperation,
