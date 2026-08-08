@@ -4,6 +4,8 @@ param(
     [switch]$CheckRegKeyExists,
     [switch]$GetUninstallCommands,
     [switch]$KillGuiltyProcesses,
+    [switch]$CleanupNetworkProfiles,
+
     [switch]$ManageServices,
     [string[]]$ServiceNames,
     [string]$ServiceOperation,
@@ -24,8 +26,7 @@ param(
 )
 
 #region helper functions
-function ConvertFrom-UninstallCommand()
-{
+function ConvertFrom-UninstallCommand() {
     <#
     .SYNOPSIS
         Parses an uninstall command string into FilePath and Arguments components.
@@ -44,51 +45,44 @@ function ConvertFrom-UninstallCommand()
     $filePath = $null
     $arguments = $null
 
-    if ($cmd -match '^"([^"]+)"(.*)$')
-    {
+    if ($cmd -match '^"([^"]+)"(.*)$') {
         # Quoted path (e.g., "C:\Program Files\App\uninstall.exe" /args)
         $filePath = $matches[1]
         $arguments = $matches[2].Trim()
         Write-Verbose "[$functionName] Parsed quoted path: FilePath='$filePath', Arguments='$arguments'"
         write-log -logFile $logFile -Module $functionName -Message "Parsed quoted path: FilePath='$filePath', Arguments='$arguments'"
     }
-    elseif ($cmd -match '^(MsiExec\.exe)\s+(.*)$')
-    {
+    elseif ($cmd -match '^(MsiExec\.exe)\s+(.*)$') {
         # Special case for MsiExec.exe (case-insensitive)
         $filePath = "MsiExec.exe"
         $arguments = $matches[2].Trim()
         Write-Verbose "[$functionName] Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"
         write-log -logFile $logFile -Module $functionName -Message "Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"
     }
-    elseif ($cmd -match '^([A-Z]:\\.+\.exe)\s+(.*)$')
-    {
+    elseif ($cmd -match '^([A-Z]:\\.+\.exe)\s+(.*)$') {
         # Unquoted full path with .exe extension
         Write-Verbose "[$functionName] Parsing unquoted full path with .exe extension: $cmd"
         write-log -logFile $logFile -Module $functionName -Message "Parsing unquoted full path with .exe extension: $cmd"
         $exeIndex = $cmd.LastIndexOf('.exe')
-        if ($exeIndex -ge 0)
-        {
+        if ($exeIndex -ge 0) {
             $filePath = $cmd.Substring(0, $exeIndex + 4).Trim()
             $arguments = $cmd.Substring($exeIndex + 4).Trim()
         }
-        else
-        {
+        else {
             $filePath = $matches[1]
             $arguments = $matches[2].Trim()
         }
         Write-Verbose "[$functionName] Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"
         write-log -logFile $logFile -Module $functionName -Message "Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"
     }
-    elseif ($cmd -match '^(\S+\.exe)\s*(.*)$')
-    {
+    elseif ($cmd -match '^(\S+\.exe)\s*(.*)$') {
         # Simple executable name without path
         $filePath = $matches[1]
         $arguments = $matches[2].Trim()
         Write-Verbose "[$functionName] Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"
         write-log -logFile $logFile -Module $functionName -Message "Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"
     }
-    else
-    {
+    else {
         # Fallback: treat the whole command as filepath
         $filePath = $cmd.Trim()
         $arguments = ""
@@ -102,8 +96,7 @@ function ConvertFrom-UninstallCommand()
     }
 }
 
-function Get-UserInput()
-{
+function Get-UserInput() {
     <#
     .SYNOPSIS
         Prompts the user for input with a specified message.
@@ -122,17 +115,13 @@ function Get-UserInput()
 
     $functionName = $MyInvocation.MyCommand.Name
     Write-Verbose "[$functionName] Prompting user with message: $message"
-    if ($inputType -eq "int")
-    {
-        while ($true)
-        {
+    if ($inputType -eq "int") {
+        while ($true) {
             $userInput = Read-Host -Prompt $message
-            if ([int]::TryParse($userInput, [ref]$null))
-            {
+            if ([int]::TryParse($userInput, [ref]$null)) {
                 break
             }
-            else
-            {
+            else {
                 Write-Host "Invalid input. Please enter a valid integer." -ForegroundColor Yellow
                 #beep
                 [console]::beep(1000, 300)
@@ -141,38 +130,30 @@ function Get-UserInput()
         Write-Verbose "[$functionName] User input received: $userInput"
         return [int]$userInput
     }
-    elseif ($inputType -eq "bool")
-    {
-        while ($true)
-        {
+    elseif ($inputType -eq "bool") {
+        while ($true) {
             $userInput = Read-Host -Prompt "$message (y/n)"
-            if ($userInput -match '^(y|yes)$')
-            {
+            if ($userInput -match '^(y|yes)$') {
                 Write-Verbose "[$functionName] User input received: True"
                 return $true
             }
-            elseif ($userInput -match '^(n|no)$')
-            {
+            elseif ($userInput -match '^(n|no)$') {
                 Write-Verbose "[$functionName] User input received: False"
                 return $false
             }
-            else
-            {
+            else {
                 Write-Host "Invalid input. Please enter 'y' for yes or 'n' for no." -ForegroundColor Yellow
                 #beep
                 [console]::beep(1000, 300)
             }
         }
     }
-    elseif ($inputType -eq "array")
-    {
+    elseif ($inputType -eq "array") {
         Write-Host "$message (Enter multiple values one per line, finish with an empty line):"
         $inputArray = [System.Collections.ArrayList]@()
-        while ($true)
-        {
+        while ($true) {
             $line = Read-Host -Prompt "> "
-            if ([string]::IsNullOrWhiteSpace($line))
-            {
+            if ([string]::IsNullOrWhiteSpace($line)) {
                 break
             }
             [void]$inputArray.Add($line.Trim())
@@ -191,16 +172,13 @@ function Get-UserInput()
 . $PSScriptRoot\functions\Find-FolderPath.ps1
 . $PSScriptRoot\functions\Test-PowerShellSyntax.ps1
 $functionsFolder = Find-FolderPath -Path "$psscriptRoot" -FolderName "functions"
-if (Test-Path $functionsFolder)
-{
+if (Test-Path $functionsFolder) {
     Write-Verbose "[$scriptName] Importing functions from $functionsFolder"
     $functions = Get-ChildItem -Path "$functionsFolder\*.ps1" -File
-    foreach ($function in $functions)
-    {
+    foreach ($function in $functions) {
         Write-Verbose " [$scriptName] Importing function $function"
         $syntaxCheck = Test-PowerShellSyntax -File $function
-        if ($syntaxCheck.HasErrors)
-        {
+        if ($syntaxCheck.HasErrors) {
             Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
             write-log -logFile $logFile -Module $scriptName -Message "Syntax errors found in $($function.FullName). Skipping import." -LogLevel "Error"
             continue
@@ -208,8 +186,7 @@ if (Test-Path $functionsFolder)
         . $function.FullName
     }
 }
-else
-{
+else {
     Write-Host 'Cannot find the functions folder. Exiting script.' -ForegroundColor Red
     exit 1
 }
@@ -265,10 +242,6 @@ $menuItems = @(
         description = "Create a ZIP archive from a list of files."
     },
     @{
-        name        = "CheckProductInstallStatus"
-        description = "Check installation status and details for software by keyword."
-    },
-    @{
         name        = "ExtractEmailAddresses"
         description = "Extract all unique email addresses from a text file."
     },
@@ -283,8 +256,13 @@ $menuItems = @(
     @{
         name        = "WhoisLookup"
         description = "Perform a WHOIS lookup on a domain name or IP address."
+    },
+    @{
+        name        = "CleanupNetworkProfiles"
+        description = "Remove network profiles matching a keyword from the system."
     }
 )
+$AdminMessage = "You must be an administrator to perform this operation. Please run the script as an administrator."
 #endregion define variables
 
 write-log -logFile $logFile -StartLogging
@@ -293,34 +271,27 @@ Write-Host "Welcome to SAK, the Swiss Army Knife for System Administrators!" -Fo
 Write-Host "===============================================================" -ForegroundColor Cyan
 
 #if no commandline parameters are passed, display the menu.
-if (-not $PSBoundParameters.Keys.Count)
-{
+if (-not $PSBoundParameters.Keys.Count) {
     write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
     $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
 
-    switch ($userChoice)
-    {
-        "CheckRegKeyExists"
-        {
+    switch ($userChoice) {
+        "CheckRegKeyExists" {
             $inputString = Get-UserInput -message "Enter the path to the registry keys file:"
             $CheckRegKeyExists = $true
         }
-        "GetUninstallCommands"
-        {
+        "GetUninstallCommands" {
             [array]$inputString = Get-UserInput -message "Enter keywords to search for uninstall commands:" -inputType "array"
             $GetUninstallCommands = $true
             $exportPathInput = Get-UserInput -message "Enter export path for uninstall commands CSV (or leave blank to skip export):"
-            if (-not [string]::IsNullOrWhiteSpace($exportPathInput))
-            {
+            if (-not [string]::IsNullOrWhiteSpace($exportPathInput)) {
                 $ExportPath = $exportPathInput
             }
         }
-        "KillGuiltyProcesses"
-        {
+        "KillGuiltyProcesses" {
             $KillGuiltyProcesses = $true
         }
-        "ManageServices"
-        {
+        "ManageServices" {
             $ManageServices = $true
             [array]$ServiceNames = Get-UserInput -message "Enter service name(s) to manage:" -inputType "array"
             $operationChoices = @(
@@ -331,98 +302,82 @@ if (-not $PSBoundParameters.Keys.Count)
             )
             $ServiceOperation = Show-NumericMenu -choices $operationChoices -banner "Select the operation to perform:" -RequireEnter
         }
-        "CreateZIPArchive"
-        {
+        "CreateZIPArchive" {
             $CreateZIPArchive = $true
             [array]$inputString = Get-UserInput -message "Enter file path(s) to include in the ZIP:" -inputType "array"
             $ArchiveDestination = Get-UserInput -message "Enter destination path for the ZIP file (e.g. C:\output\archive.zip):"
         }
-        "CheckProductInstallStatus"
-        {
-            $CheckProductInstallStatus = $true
-            [array]$inputString = Get-UserInput -message "Enter keyword(s) to search for installed products:" -inputType "array"
-            $productStatusExportInput = Get-UserInput -message "Enter export path for results CSV (or leave blank to skip):"
-            if (-not [string]::IsNullOrWhiteSpace($productStatusExportInput))
-            {
-                $ProductStatusExportPath = $productStatusExportInput
-            }
-        }
-        "ExtractEmailAddresses"
-        {
+        "ExtractEmailAddresses" {
             $ExtractEmailAddresses = $true
             $inputString = Get-UserInput -message "Enter the path to the text file to scan for email addresses:"
             $emailExportInput = Get-UserInput -message "Enter export path to save email addresses (or leave blank to skip):"
-            if (-not [string]::IsNullOrWhiteSpace($emailExportInput))
-            {
+            if (-not [string]::IsNullOrWhiteSpace($emailExportInput)) {
                 $EmailExportPath = $emailExportInput
             }
         }
-        "DownloadFileFromURL"
-        {
+        "DownloadFileFromURL" {
             $DownloadFileFromURL = $true
             $DownloadURL = Get-UserInput -message "Enter the URL to download the file from:"
             $DownloadDestination = Get-UserInput -message "Enter the full local path to save the file (e.g. C:\Downloads\file.zip):"
         }
-        "GetLocalComputerInfo"
-        {
+        "GetLocalComputerInfo" {
             $GetLocalComputerInfo = $true
         }
-        "WhoisLookup"
-        {
+        "WhoisLookup" {
             $WhoisLookup = $true
             $WhoisTarget = Get-UserInput -message "Enter the domain name or IP address to look up:"
             $whoisServerInput = Get-UserInput -message "Enter a WHOIS server to use (or leave blank to use the default):"
-            if (-not [string]::IsNullOrWhiteSpace($whoisServerInput))
-            {
+            if (-not [string]::IsNullOrWhiteSpace($whoisServerInput)) {
                 $WhoisServer = $whoisServerInput
             }
         }
-        default
-        {
+        "CleanupNetworkProfiles" {
+            if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+                Write-Host $adminMessage -ForegroundColor Red
+                write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: script not run as administrator." -LogLevel "Error"
+                write-log -logFile $LogFile -Finishlogging
+                exit 1
+            }
+            $cleanupNetworkProfiles = $true
+            $inputString = Get-UserInput -message "Enter the keyword to match network profiles for cleanup.`nPress enter to match all profiles"
+        }
+        default {
             Write-Host "Exiting script."
+            write-log -logFile $logFile -FinishLogging
             write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
             exit 1
         }
     }
 }
 
-if ($KillGuiltyProcesses)
-{
+if ($KillGuiltyProcesses) {
     Write-Host "Select whether you want to kill all processes or a single process:"
     $choice = Read-Host -Prompt "Enter 'all' to kill all guilty processes or 'single' to specify one process"
-    while ($choice -notin @('all', 'single', 'a', 's'))
-    {
+    while ($choice -notin @('all', 'single', 'a', 's')) {
         Write-Host "Invalid choice. Please enter 'all' or 'single'." -ForegroundColor Yellow
         #beep
         [console]::beep(1000, 300)
         $choice = Read-Host -Prompt "Enter 'all' to kill all guilty processes or 'single' to specify one process"
     }
-    $choice = if ($choice -in @('a', 'all'))
-    {
+    $choice = if ($choice -in @('a', 'all')) {
         'all'
     }
-    else
-    {
+    else {
         'single'
     }
-    switch ($choice)
-    {
-        all
-        {
+    switch ($choice) {
+        all {
             $processesClosed = Close-Process -ProcessNames $guiltyProcessesToStop
         }
-        single
-        {
+        single {
             $runningProcesses = Get-Process | Select-Object -ExpandProperty ProcessName
             $guiltyProcessesToStop = $guiltyProcessesToStop | Where-Object { $runningProcesses -contains $_ }
             $processChoice = Show-NumericMenu -choices $guiltyProcessesToStop -banner "Select a process to close:" -RequireEnter
-            if ($null -eq $processChoice -or $processChoice -eq 0)
-            {
+            if ($null -eq $processChoice -or $processChoice -eq 0) {
                 Write-Host "No process selected. Exiting process closure."
                 write-log -logFile $LogFile -Module $scriptName -Message "No process selected for closure. Exiting." -LogLevel "Warning"
             }
-            else
-            {
+            else {
                 Write-Host "You selected to close process: $processChoice"
                 $processesClosed = Close-Process -ProcessNames $processChoice
             }
@@ -430,17 +385,14 @@ if ($KillGuiltyProcesses)
     }
     Write-Verbose "[$scriptName] Processes closed result: $($processesClosed | Out-String)"
     write-log -logFile $LogFile -Module $scriptName -Message "Processes closed result: $($processesClosed | Out-String)" -LogLevel "Information"
-    if ($processesClosed.allProcessesClosed)
-    {
+    if ($processesClosed.allProcessesClosed) {
         Write-Host "All interfering processes closed successfully."
         Write-Log -LogFile $LogFile -Module $scriptName -Message "All interfering processes closed successfully." -LogLevel "Information"
     }
-    else
-    {
+    else {
         Write-Host "Some processes could not be closed. See log for details."
         Write-Host "Processes not closed:"
-        foreach ($proc in $processesClosed.processesNotClosed)
-        {
+        foreach ($proc in $processesClosed.processesNotClosed) {
             Write-Host " - $proc"
             write-log -logFile $LogFile -Module $scriptName -Message " - $proc" -LogLevel "Information"
         }
@@ -448,28 +400,22 @@ if ($KillGuiltyProcesses)
     }
 }
 
-if ($CheckRegKeyExists)
-{
+if ($CheckRegKeyExists) {
     $regKeys = Import-RegKeysFromFile -FilePath $inputString
-    if ($null -ne $regKeys)
-    {
+    if ($null -ne $regKeys) {
         $allKeysExist = Set-RegKeys -RegistryEntries $regKeys -CheckOnly
         Write-Host "Processed a total of $($allKeysExist.totalEntries) registry entries."
-        if ($allKeysExist -and $allKeysExist.hasCorrectValues)
-        {
+        if ($allKeysExist -and $allKeysExist.hasCorrectValues) {
             Write-Host "All registry keys exist with correct values: $($allKeysExist.message)"
             Write-Log -LogFile $logFile -Module $scriptName -Message "All registry keys exist with correct values." -LogLevel "Information"
         }
-        else
-        {
+        else {
             Write-Host "Some registry keys are missing or have incorrect values."
             Write-Log -LogFile $logFile -Module $scriptName -Message "Some registry keys are missing or have incorrect values." -LogLevel "Warning"
-            if ($allKeysExist.missingKeysCount -gt 0)
-            {
+            if ($allKeysExist.missingKeysCount -gt 0) {
                 Write-Host "Missing keys count: $($allKeysExist.missingKeysCount)"
                 Write-Log -LogFile $logFile -Module $scriptName -Message "Missing keys count: $($allKeysExist.missingKeysCount)" -LogLevel "Warning"
-                foreach ($missingKey in $allKeysExist.missingKeys)
-                {
+                foreach ($missingKey in $allKeysExist.missingKeys) {
                     Write-Host "Key path: $($missingKey.path)"
                     Write-Host "Key name: $($missingKey.name)"
                     Write-Host "Key value: $($missingKey.value)"
@@ -477,12 +423,10 @@ if ($CheckRegKeyExists)
                     Write-Log -LogFile $logFile -Module $scriptName -Message " - $missingKey" -LogLevel "Warning"
                 }
             }
-            if ($allKeysExist.entriesFailedCount -gt 0)
-            {
+            if ($allKeysExist.entriesFailedCount -gt 0) {
                 Write-Host "Entries with incorrect values count: $($allKeysExist.entriesFailedCount)"
                 Write-Log -LogFile $logFile -Module $scriptName -Message "Entries with incorrect values count: $($allKeysExist.entriesFailedCount)" -LogLevel "Warning"
-                foreach ($failedEntry in $allKeysExist.entriesFailed)
-                {
+                foreach ($failedEntry in $allKeysExist.entriesFailed) {
                     Write-Host "Key path: $($failedEntry.path)"
                     Write-Host "Key name: $($failedEntry.name)"
                     Write-Host "Expected value: $($failedEntry.expectedValue)"
@@ -493,41 +437,34 @@ if ($CheckRegKeyExists)
 
         }
     }
-    else
-    {
+    else {
         Write-Host "No registry keys to check."
         Write-Log -LogFile $logFile -Module $scriptName -Message "No registry keys to check." -LogLevel "Warning"
         $exitCode = 1
     }
 }
 
-if ($GetUninstallCommands)
-{
+if ($GetUninstallCommands) {
     $uninstallData = Get-UninstallCommand -keywords $inputString
-    if ($uninstallData.hasErrors)
-    {
+    if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
         $exitCode = 1
     }
-    elseif ($uninstallData.products.Count -eq 0)
-    {
+    elseif ($uninstallData.products.Count -eq 0) {
         Write-Host "No products found matching keywords: $inputString. Nothing to uninstall."
         write-log -logFile $LogFile -Module $scriptName -Message "No products found matching keywords. Nothing to uninstall." -LogLevel "Information"
         $exitCode = 0
     }
-    else
-    {
+    else {
         Write-Host "`n===================================================================" -ForegroundColor Cyan
         Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $inputString" -ForegroundColor Cyan
         Write-Host "===================================================================" -ForegroundColor Cyan
         write-log -logFile $LogFile -Module $scriptName -Message "Found $($uninstallData.products.Count) product(s) to uninstall." -LogLevel "Information"
 
         # Display most likely candidate first if exists
-        if ($uninstallData.mostLikelyMatch)
-        {
-            if ($uninstallData.products.Count -gt 1)
-            {
+        if ($uninstallData.mostLikelyMatch) {
+            if ($uninstallData.products.Count -gt 1) {
                 Write-Host "`n*** MOST LIKELY MAIN APPLICATION ***" -ForegroundColor Green
             }
             $mostLikely = $uninstallData.mostLikelyMatch
@@ -535,20 +472,17 @@ if ($GetUninstallCommands)
             Write-Host "Version:         $($mostLikely.Version)"
             Write-Host "Publisher:       $($mostLikely.Publisher)"
             Write-Host "Size:            $($mostLikely.SizeMB) MB ($($mostLikely.SizeKB) KB)"
-            if (-not ([string]::IsNullOrEmpty($mostLikely.InstallDate)))
-            {
+            if (-not ([string]::IsNullOrEmpty($mostLikely.InstallDate))) {
                 Write-Host "Install Date:    $($mostLikely.InstallDate)"
             }
-            if (-not ([string]::IsNullOrEmpty($mostLikely.InstallLocation)))
-            {
+            if (-not ([string]::IsNullOrEmpty($mostLikely.InstallLocation))) {
                 Write-Host "Install Location: $($mostLikely.InstallLocation)"
             }
             Write-Host "Registry path: $($mostLikely.RegistryPath)"
             Write-Host "Registry Key:    $($mostLikely.RegKey)"
             Write-Host "`n--- Uninstall Commands ---" -ForegroundColor Yellow
             # Parse and display standard uninstall command
-            if (-not [string]::IsNullOrWhiteSpace($mostLikely.UninstallCmd))
-            {
+            if (-not [string]::IsNullOrWhiteSpace($mostLikely.UninstallCmd)) {
                 Write-Host "  Raw Uninstall Command:" -ForegroundColor Cyan
                 Write-Host "    $($mostLikely.UninstallCmd)"
                 $parsed = ConvertFrom-UninstallCommand -cmd $mostLikely.UninstallCmd
@@ -557,8 +491,7 @@ if ($GetUninstallCommands)
                 Write-Host "    Arguments: $($parsed.Arguments)"
             }
             # Parse and display quiet uninstall command if exists
-            if (-not [string]::IsNullOrWhiteSpace($mostLikely.QuietUninstall))
-            {
+            if (-not [string]::IsNullOrWhiteSpace($mostLikely.QuietUninstall)) {
                 Write-Host "`n  Raw Quiet Uninstall Command:" -ForegroundColor Cyan
                 Write-Host "    $($mostLikely.QuietUninstall)"
                 $parsedQuiet = ConvertFrom-UninstallCommand -cmd $mostLikely.QuietUninstall
@@ -570,20 +503,16 @@ if ($GetUninstallCommands)
         }
         # Collection for export
         $exportData = @()
-        if ($uninstallData.products.count -gt 1)
-        {
+        if ($uninstallData.products.count -gt 1) {
             Write-Host "`n`n*** ALL MATCHING PRODUCTS ***" -ForegroundColor Cyan
-            foreach ($product in $uninstallData.products)
-            {
+            foreach ($product in $uninstallData.products) {
                 write-log -logFile $LogFile -Module $scriptName -Message "Processing uninstall for: $($product.Name) (Version: $($product.Version), Size: $($product.SizeMB)MB, Publisher: $($product.Publisher))" -LogLevel "Information"
 
                 Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
-                if ($product.IsMostLikely)
-                {
+                if ($product.IsMostLikely) {
                     Write-Host "Product Name:    $($product.Name) [MOST LIKELY]" -ForegroundColor Green
                 }
-                else
-                {
+                else {
                     Write-Host "Product Name:    $($product.Name)"
                 }
                 Write-Host "Version:         $($product.Version)"
@@ -612,8 +541,7 @@ if ($GetUninstallCommands)
                     QuietUninstallArguments = $null
                 }
                 # Parse and display standard uninstall command
-                if (-not [string]::IsNullOrWhiteSpace($product.UninstallCmd))
-                {
+                if (-not [string]::IsNullOrWhiteSpace($product.UninstallCmd)) {
                     Write-Host "`n  Raw Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.UninstallCmd)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw uninstall command: $($product.UninstallCmd)" -LogLevel "Verbose"
@@ -627,13 +555,11 @@ if ($GetUninstallCommands)
                     $exportObj.UninstallFilePath = $parsed.FilePath
                     $exportObj.UninstallArguments = $parsed.Arguments
                 }
-                else
-                {
+                else {
                     Write-Host "`n  No standard uninstall command available" -ForegroundColor Yellow
                 }
                 # Parse and display quiet uninstall command if exists
-                if (-not [string]::IsNullOrWhiteSpace($product.QuietUninstall))
-                {
+                if (-not [string]::IsNullOrWhiteSpace($product.QuietUninstall)) {
                     Write-Host "`n  Raw Quiet Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.QuietUninstall)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw quiet uninstall command: $($product.QuietUninstall)" -LogLevel "Verbose"
@@ -647,8 +573,7 @@ if ($GetUninstallCommands)
                     $exportObj.QuietUninstallFilePath = $parsedQuiet.FilePath
                     $exportObj.QuietUninstallArguments = $parsedQuiet.Arguments
                 }
-                else
-                {
+                else {
                     Write-Host "`n  No quiet uninstall command available" -ForegroundColor DarkGray
                 }
                 $exportData += $exportObj
@@ -657,8 +582,7 @@ if ($GetUninstallCommands)
             Write-Host "End of product list" -ForegroundColor Cyan
             Write-Host "===================================================================" -ForegroundColor Cyan
         }
-        else
-        {
+        else {
             # Single product - build export object from the mostLikelyMatch already displayed above
             $exportObj = [PSCustomObject]@{
                 ProductName             = $mostLikely.Name
@@ -671,53 +595,42 @@ if ($GetUninstallCommands)
                 InstallLocation         = $mostLikely.InstallLocation
                 IsMostLikely            = $true
                 RawUninstallCmd         = $mostLikely.UninstallCmd
-                UninstallFilePath       = $(if ($parsed)
-                    {
+                UninstallFilePath       = $(if ($parsed) {
                         $parsed.FilePath
                     }
-                    else
-                    {
+                    else {
                         $null
                     })
-                UninstallArguments      = $(if ($parsed)
-                    {
+                UninstallArguments      = $(if ($parsed) {
                         $parsed.Arguments
                     }
-                    else
-                    {
+                    else {
                         $null
                     })
                 RawQuietUninstallCmd    = $mostLikely.QuietUninstall
-                QuietUninstallFilePath  = $(if ($parsedQuiet)
-                    {
+                QuietUninstallFilePath  = $(if ($parsedQuiet) {
                         $parsedQuiet.FilePath
                     }
-                    else
-                    {
+                    else {
                         $null
                     })
-                QuietUninstallArguments = $(if ($parsedQuiet)
-                    {
+                QuietUninstallArguments = $(if ($parsedQuiet) {
                         $parsedQuiet.Arguments
                     }
-                    else
-                    {
+                    else {
                         $null
                     })
             }
             $exportData += $exportObj
         }
         # Export if requested
-        if (-not [string]::IsNullOrWhiteSpace($ExportPath))
-        {
-            try
-            {
+        if (-not [string]::IsNullOrWhiteSpace($ExportPath)) {
+            try {
                 $exportData | Export-Csv -Path $ExportPath -NoTypeInformation -Encoding UTF8
                 Write-Host "`nData exported successfully to: $ExportPath" -ForegroundColor Green
                 write-log -logFile $LogFile -Module $scriptName -Message "Data exported to: $ExportPath" -LogLevel "Information"
             }
-            catch
-            {
+            catch {
                 Write-Host "`nFailed to export data: $_" -ForegroundColor Red
                 write-log -logFile $LogFile -Module $scriptName -Message "Failed to export data: $_" -LogLevel "Error"
                 $exitCode = 1
@@ -726,39 +639,32 @@ if ($GetUninstallCommands)
     }
 }
 
-if ($ManageServices)
-{
-    if (-not $ServiceOperation)
-    {
+if ($ManageServices) {
+    if (-not $ServiceOperation) {
         Write-Host "No service operation specified. Exiting." -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "ManageServices: no operation specified." -LogLevel "Error"
         $exitCode = 1
     }
-    elseif (-not $ServiceNames -or $ServiceNames.Count -eq 0)
-    {
+    elseif (-not $ServiceNames -or $ServiceNames.Count -eq 0) {
         Write-Host "No service names provided. Exiting." -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "ManageServices: no service names provided." -LogLevel "Error"
         $exitCode = 1
     }
-    else
-    {
+    else {
         Write-Host "`n===============================================================" -ForegroundColor Cyan
         Write-Host "Managing service(s): $($ServiceNames -join ', ') - Operation: $ServiceOperation" -ForegroundColor Cyan
         Write-Host "===============================================================" -ForegroundColor Cyan
         write-log -logFile $LogFile -Module $scriptName -Message "ManageServices: Operation=$ServiceOperation, Services=$($ServiceNames -join ', ')" -LogLevel "Information"
 
         $serviceResults = Invoke-ServiceManager -serviceNames $ServiceNames -Operation $ServiceOperation
-        foreach ($result in $serviceResults)
-        {
+        foreach ($result in $serviceResults) {
             Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
             Write-Host "Service:     $($result.DisplayName) ($($result.Name))"
-            if ($result.NotFound)
-            {
+            if ($result.NotFound) {
                 Write-Host "Status:      Not found" -ForegroundColor Red
                 write-log -logFile $LogFile -Module $scriptName -Message "Service '$($result.Name)' not found." -LogLevel "Warning"
             }
-            else
-            {
+            else {
                 Write-Host "Operation:   $($result.Operation)"
                 Write-Host "Status:      $($result.Status)"
                 Write-Host "New Status:  $($result.NewStatus)"
@@ -771,22 +677,18 @@ if ($ManageServices)
     }
 }
 
-if ($CreateZIPArchive)
-{
-    if ([string]::IsNullOrWhiteSpace($ArchiveDestination))
-    {
+if ($CreateZIPArchive) {
+    if ([string]::IsNullOrWhiteSpace($ArchiveDestination)) {
         Write-Host "No destination path specified for the ZIP archive. Exiting." -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "CreateZIPArchive: no destination path specified." -LogLevel "Error"
         $exitCode = 1
     }
-    elseif (-not $inputString -or $inputString.Count -eq 0)
-    {
+    elseif (-not $inputString -or $inputString.Count -eq 0) {
         Write-Host "No file paths provided for the ZIP archive. Exiting." -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "CreateZIPArchive: no file paths provided." -LogLevel "Error"
         $exitCode = 1
     }
-    else
-    {
+    else {
         Write-Host "`n===============================================================" -ForegroundColor Cyan
         Write-Host "Creating ZIP archive at: $ArchiveDestination" -ForegroundColor Cyan
         Write-Host "Files to include: $($inputString -join ', ')" -ForegroundColor Cyan
@@ -794,13 +696,11 @@ if ($CreateZIPArchive)
         write-log -logFile $LogFile -Module $scriptName -Message "CreateZIPArchive: Destination=$ArchiveDestination, Files=$($inputString -join ', ')" -LogLevel "Information"
 
         $zipResult = New-ZipPackage -FilePaths $inputString -DestinationPath $ArchiveDestination
-        if ($zipResult)
-        {
+        if ($zipResult) {
             Write-Host "`nZIP archive created successfully: $ArchiveDestination" -ForegroundColor Green
             write-log -logFile $LogFile -Module $scriptName -Message "ZIP archive created successfully: $ArchiveDestination" -LogLevel "Information"
         }
-        else
-        {
+        else {
             Write-Host "`nFailed to create ZIP archive. Check log for details." -ForegroundColor Red
             write-log -logFile $LogFile -Module $scriptName -Message "Failed to create ZIP archive: $ArchiveDestination" -LogLevel "Error"
             $exitCode = 1
@@ -808,88 +708,13 @@ if ($CreateZIPArchive)
     }
 }
 
-if ($CheckProductInstallStatus)
-{
-    if (-not $inputString -or $inputString.Count -eq 0)
-    {
-        Write-Host "No keywords provided to search for installed products. Exiting." -ForegroundColor Red
-        write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: no keywords provided." -LogLevel "Error"
-        $exitCode = 1
-    }
-    else
-    {
-        Write-Host "`n===============================================================" -ForegroundColor Cyan
-        Write-Host "Checking installation status for keyword(s): $($inputString -join ', ')" -ForegroundColor Cyan
-        Write-Host "===============================================================" -ForegroundColor Cyan
-        write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: Keywords=$($inputString -join ', ')" -LogLevel "Information"
-
-        $statusData = Get-ProductInstallStatus -Products $inputString
-        if ($statusData.HasErrors)
-        {
-            Write-Host "Error checking product status: $($statusData.Message)" -ForegroundColor Red
-            write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus error: $($statusData.Message)" -LogLevel "Error"
-            $exitCode = 1
-        }
-        elseif ($statusData.Products.Count -eq 0)
-        {
-            Write-Host "No installed products found matching keyword(s): $($inputString -join ', ')" -ForegroundColor Yellow
-            write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: no products found." -LogLevel "Information"
-        }
-        else
-        {
-            Write-Host "Found $($statusData.Products.Count) installed product(s):" -ForegroundColor Green
-            write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: found $($statusData.Products.Count) product(s)." -LogLevel "Information"
-
-            $productExportData = @()
-            foreach ($product in $statusData.Products)
-            {
-                Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
-                Write-Host "Product Name: $($product.Name)" -ForegroundColor White
-                Write-Host "Version:      $($product.Version)"
-                Write-Host "Publisher:    $($product.Publisher)"
-                Write-Host "Install Date: $($product.InstallDate)"
-                Write-Host "Size:         $($product.SizeMB) MB"
-                write-log -logFile $LogFile -Module $scriptName -Message "Product: $($product.Name), Version: $($product.Version), Publisher: $($product.Publisher)" -LogLevel "Information"
-
-                $productExportData += [PSCustomObject]@{
-                    ProductName = $product.Name
-                    Version     = $product.Version
-                    Publisher   = $product.Publisher
-                    InstallDate = $product.InstallDate
-                    SizeMB      = $product.SizeMB
-                }
-            }
-            Write-Host "`n===============================================================" -ForegroundColor Cyan
-
-            if (-not [string]::IsNullOrWhiteSpace($ProductStatusExportPath))
-            {
-                try
-                {
-                    $productExportData | Export-Csv -Path $ProductStatusExportPath -NoTypeInformation -Encoding UTF8
-                    Write-Host "Results exported to: $ProductStatusExportPath" -ForegroundColor Green
-                    write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: exported to $ProductStatusExportPath" -LogLevel "Information"
-                }
-                catch
-                {
-                    Write-Host "Failed to export results: $_" -ForegroundColor Red
-                    write-log -logFile $LogFile -Module $scriptName -Message "CheckProductInstallStatus: export failed: $_" -LogLevel "Error"
-                    $exitCode = 1
-                }
-            }
-        }
-    }
-}
-
-if ($ExtractEmailAddresses)
-{
-    if ([string]::IsNullOrWhiteSpace($inputString) -or -not (Test-Path $inputString))
-    {
+if ($ExtractEmailAddresses) {
+    if ([string]::IsNullOrWhiteSpace($inputString) -or -not (Test-Path $inputString)) {
         Write-Host "File not found or no path provided: '$inputString'" -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: file not found: '$inputString'" -LogLevel "Error"
         $exitCode = 1
     }
-    else
-    {
+    else {
         Write-Host "`n===============================================================" -ForegroundColor Cyan
         Write-Host "Extracting email addresses from: $inputString" -ForegroundColor Cyan
         Write-Host "===============================================================" -ForegroundColor Cyan
@@ -898,30 +723,24 @@ if ($ExtractEmailAddresses)
         $fileLines = Get-Content -Path $inputString
         $emails = Get-EmailAddresses -lines $fileLines
 
-        if ($emails -eq "No email addresses found." -or $emails.Count -eq 0)
-        {
+        if ($emails -eq "No email addresses found." -or $emails.Count -eq 0) {
             Write-Host "No email addresses found in: $inputString" -ForegroundColor Yellow
             write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: no addresses found." -LogLevel "Information"
         }
-        else
-        {
+        else {
             Write-Host "Found $($emails.Count) unique email address(es):" -ForegroundColor Green
-            foreach ($email in $emails)
-            {
+            foreach ($email in $emails) {
                 Write-Host "  $email"
             }
             write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: found $($emails.Count) address(es)." -LogLevel "Information"
 
-            if (-not [string]::IsNullOrWhiteSpace($EmailExportPath))
-            {
-                try
-                {
+            if (-not [string]::IsNullOrWhiteSpace($EmailExportPath)) {
+                try {
                     $emails | Out-File -FilePath $EmailExportPath -Encoding UTF8
                     Write-Host "`nEmail addresses saved to: $EmailExportPath" -ForegroundColor Green
                     write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: saved to '$EmailExportPath'" -LogLevel "Information"
                 }
-                catch
-                {
+                catch {
                     Write-Host "Failed to save email addresses: $_" -ForegroundColor Red
                     write-log -logFile $LogFile -Module $scriptName -Message "ExtractEmailAddresses: export failed: $_" -LogLevel "Error"
                     $exitCode = 1
@@ -931,16 +750,13 @@ if ($ExtractEmailAddresses)
     }
 }
 
-if ($DownloadFileFromURL)
-{
-    if ([string]::IsNullOrWhiteSpace($DownloadURL) -or [string]::IsNullOrWhiteSpace($DownloadDestination))
-    {
+if ($DownloadFileFromURL) {
+    if ([string]::IsNullOrWhiteSpace($DownloadURL) -or [string]::IsNullOrWhiteSpace($DownloadDestination)) {
         Write-Host "URL or destination path not provided. Exiting." -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: URL or destination not provided." -LogLevel "Error"
         $exitCode = 1
     }
-    else
-    {
+    else {
         Write-Host "`n===============================================================" -ForegroundColor Cyan
         Write-Host "Downloading file from: $DownloadURL" -ForegroundColor Cyan
         Write-Host "Saving to:             $DownloadDestination" -ForegroundColor Cyan
@@ -948,13 +764,11 @@ if ($DownloadFileFromURL)
         write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: URL=$DownloadURL, Destination=$DownloadDestination" -LogLevel "Information"
 
         $downloadResult = Get-FileFromURL -url $DownloadURL -destination $DownloadDestination
-        if ($downloadResult)
-        {
+        if ($downloadResult) {
             Write-Host "`nFile downloaded successfully to: $DownloadDestination" -ForegroundColor Green
             write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: file saved to '$DownloadDestination'." -LogLevel "Information"
         }
-        else
-        {
+        else {
             Write-Host "`nFailed to download file. Check log for details." -ForegroundColor Red
             write-log -logFile $LogFile -Module $scriptName -Message "DownloadFileFromURL: download failed." -LogLevel "Error"
             $exitCode = 1
@@ -962,19 +776,16 @@ if ($DownloadFileFromURL)
     }
 }
 
-if ($GetLocalComputerInfo)
-{
+if ($GetLocalComputerInfo) {
     Write-Host "`n===============================================================" -ForegroundColor Cyan
     Write-Host "Retrieving local computer information..." -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     write-log -logFile $LogFile -Module $scriptName -Message "GetLocalComputerInfo: retrieving computer info." -LogLevel "Information"
 
     $computerInfo = Get-LocalComputerInfo
-    if ($computerInfo.ErrorOccurred)
-    {
+    if ($computerInfo.ErrorOccurred) {
         Write-Host "Errors occurred while retrieving computer info:" -ForegroundColor Yellow
-        foreach ($errMsg in $computerInfo.ErrorMessages)
-        {
+        foreach ($errMsg in $computerInfo.ErrorMessages) {
             Write-Host "  - $errMsg" -ForegroundColor Yellow
         }
         write-log -logFile $LogFile -Module $scriptName -Message "GetLocalComputerInfo: errors occurred: $($computerInfo.ErrorMessages -join '; ')" -LogLevel "Warning"
@@ -984,8 +795,7 @@ if ($GetLocalComputerInfo)
     Write-Host "Client Name:     $($computerInfo.ClientName)"
     Write-Host "Client OS:       $($computerInfo.ClientOS)"
     Write-Host "Client IP:       $($computerInfo.ClientIPAddress)"
-    if ($computerInfo.ClientVersion)
-    {
+    if ($computerInfo.ClientVersion) {
         Write-Host "Client Version:  $($computerInfo.ClientVersion)"
     }
     Write-Host "IGEL Client:     $($computerInfo.IsIGEL)"
@@ -993,38 +803,83 @@ if ($GetLocalComputerInfo)
     write-log -logFile $LogFile -Module $scriptName -Message "GetLocalComputerInfo: SessionType=$($computerInfo.SessionType), Server=$($computerInfo.ServerName), Client=$($computerInfo.ClientName), OS=$($computerInfo.ClientOS), IP=$($computerInfo.ClientIPAddress)" -LogLevel "Information"
 }
 
-if ($WhoisLookup)
-{
-    if ([string]::IsNullOrWhiteSpace($WhoisTarget))
-    {
+if ($WhoisLookup) {
+    if ([string]::IsNullOrWhiteSpace($WhoisTarget)) {
         Write-Host "No domain name or IP address provided. Exiting." -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: no target provided." -LogLevel "Error"
         $exitCode = 1
     }
-    else
-    {
+    else {
         Write-Host "`n===============================================================" -ForegroundColor Cyan
         Write-Host "WHOIS lookup for: $WhoisTarget" -ForegroundColor Cyan
         Write-Host "===============================================================" -ForegroundColor Cyan
         write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: target='$WhoisTarget', server='$WhoisServer'" -LogLevel "Information"
-
         $whoisParams = @{ DomainNameOrIPAddress = $WhoisTarget }
-        if (-not [string]::IsNullOrWhiteSpace($WhoisServer))
-        {
+        if (-not [string]::IsNullOrWhiteSpace($WhoisServer)) {
             $whoisParams.WhoisServer = $WhoisServer
         }
         $whoisResult = Get-WhoisInfo @whoisParams
-        if ($whoisResult)
-        {
+        if ($whoisResult) {
             Write-Host "`n$whoisResult" -ForegroundColor White
             write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: result received for '$WhoisTarget'." -LogLevel "Information"
         }
-        else
-        {
+        else {
             Write-Host "`nNo WHOIS data returned for: $WhoisTarget" -ForegroundColor Yellow
             write-log -logFile $LogFile -Module $scriptName -Message "WhoisLookup: no data returned for '$WhoisTarget'." -LogLevel "Warning"
         }
         Write-Host "`n===============================================================" -ForegroundColor Cyan
+    }
+}
+
+if ($cleanupNetworkProfiles) {
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Host $adminMessage -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: script not run as administrator." -LogLevel "Error"
+        write-log -logFile $LogFile -Finishlogging
+        exit 1
+    }
+    Write-Host "Getting all network profiles..."
+    $allProfiles = Get-NetworkProfiles -keyWord $inputString
+    if ($null -eq $allProfiles -or $allProfiles.Count -eq 0) {
+        Write-Host "No network profiles found on this system." -ForegroundColor Yellow
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: no profiles found." -LogLevel "Warning"
+    }
+    else {
+        Write-Host "Found $($allProfiles.Count) network profile(s)."
+        $totalProfileCount = $allProfiles.Count
+        $deletedProfiles = 0
+        foreach ($networkProfile in $allProfiles) {
+            Write-Host "  Profile Name: $($networkProfile.ProfileName), Category: $($networkProfile.Category)"
+            write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: removing profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid)), profile path: $($networkProfile.profilePath), Category: $($networkProfile.Category)" -LogLevel "Information"
+            $choice = Read-Host -Prompt "Are you sure you want to remove this profile? (Y/N)"
+            while ($choice -notin @('Y', 'N', 'y', 'n')) {
+                Write-Host "Invalid choice. Please enter 'Y' or 'N'." -ForegroundColor Yellow
+                [console]::beep(1000, 300)
+                $choice = Read-Host -Prompt "Are you sure you want to remove this profile? (Y/N)"
+            }
+            if ($choice -eq 'Y' -or $choice -eq 'y') {
+                Write-Host "Removing network profile: $($networkProfile.ProfileName) (GUID: $($networkProfile.profileGuid))" -ForegroundColor Green
+                try {
+                    Remove-Item -Path $networkProfile.profilePath -Recurse -Force
+                    $deletedProfiles++
+                    Write-Host "Network profile $($networkProfile.ProfileName) removed successfully." -ForegroundColor Green
+                    write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: removed profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid))" -LogLevel "Information"
+                }
+                catch {
+                    Write-Host "Failed to remove network profile $($networkProfile.ProfileName): $_" -ForegroundColor Red
+                    write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: failed to remove profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid)): $_" -LogLevel "Error"
+                    $exitCode = 1
+                }
+            }
+            else {
+                Write-Host "Skipping removal of network profile: $($networkProfile.ProfileName) (GUID: $($networkProfile.profileGuid))" -ForegroundColor Yellow
+                write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: skipped removal of profile '$($networkProfile.ProfileName)' (GUID: $($networkProfile.profileGuid))" -LogLevel "Information"
+            }
+        }
+        Write-Host "`nNetwork profile cleanup completed."
+        Write-Host "Total profiles found: $totalProfileCount"
+        Write-Host "Total profiles deleted: $deletedProfiles"
+        write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: cleanup completed." -LogLevel "Information"
     }
 }
 
