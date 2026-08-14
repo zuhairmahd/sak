@@ -6,6 +6,8 @@ param(
 
     [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
     [switch]$GetUninstallCommands,
+    [Parameter(ParameterSetName = "GetUninstallCommands")]
+    [string]$ExportPath,
 
     [Parameter(ParameterSetName = "KillGuiltyProcesses", Mandatory = $true)]
     [switch]$KillGuiltyProcesses,
@@ -36,9 +38,6 @@ param(
     [Parameter(ParameterSetName = "ExtractEmailAddresses")]
     [string]$EmailExportPath,
 
-    [Parameter(ParameterSetName = "GetUninstallCommands")]
-    [string]$ExportPath,
-
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [switch]$DownloadFileFromURL,
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
@@ -48,6 +47,11 @@ param(
 
     [Parameter(ParameterSetName = "GetLocalComputerInfo", Mandatory = $true)]
     [switch]$GetLocalComputerInfo,
+
+    [Parameter(ParameterSetName = "GetMSIProperties", Mandatory = $true)]
+    [switch]$GetMSIProperties,
+    [Parameter(ParameterSetName = "GetMSIProperties", Mandatory = $true)]
+    [string[]]$MSIFilePath,
 
     [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
     [switch]$WhoisLookup,
@@ -300,6 +304,10 @@ $menuItems = @(
     @{
         name        = "CleanupNetworkProfiles"
         description = "Remove network profiles matching a keyword from the system."
+    },
+    @{
+        name        = "GetMSIProperties"
+        description = "Retrieve properties from MSI files."
     }
 )
 $AdminMessage = "You must be an administrator to perform this operation. Please run the script as an administrator."
@@ -380,6 +388,10 @@ if (-not $PSBoundParameters.Keys.Count) {
             }
             $cleanupNetworkProfiles = $true
             $inputString = Get-UserInput -message "Enter the keyword to match network profiles for cleanup.`nPress enter to match all profiles"
+        }
+        "GetMSIProperties" {
+            $GetMSIProperties = $true
+            [array]$MSIFilePath = Get-UserInput -message "Enter the path(s) to the MSI file(s) to retrieve properties from:" -inputType "array"
         }
         default {
             Write-Host "Exiting script."
@@ -958,6 +970,38 @@ if ($cleanupNetworkProfiles) {
         Write-Host "Total profiles found: $totalProfileCount"
         Write-Host "Total profiles deleted: $deletedProfiles"
         write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: cleanup completed." -LogLevel "Information"
+    }
+}
+
+if ($GetMSIProperties) {
+    if (-not $MSIFilePath -or $MSIFilePath.Count -eq 0) {
+        Write-Host "No MSI file paths provided. Exiting." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "GetMSIProperties: no MSI file paths provided." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else {
+        Write-Host "`n===============================================================" -ForegroundColor Cyan
+        Write-Host "Retrieving properties from MSI files..." -ForegroundColor Cyan
+        Write-Host "===============================================================" -ForegroundColor Cyan
+        write-log -logFile $LogFile -Module $scriptName -Message "GetMSIProperties: retrieving properties from MSI files." -LogLevel "Information"
+
+        try {
+            $MSIProperties = Get-MSIProperties -FilePath $MSIFilePath
+            if ($global:MSIProperties.Count -eq 0) {
+                Write-Host "No properties retrieved from the specified MSI files." -ForegroundColor Yellow
+                write-log -logFile $LogFile -Module $scriptName -Message "GetMSIProperties: no properties retrieved." -LogLevel "Warning"
+            }
+            else {
+                Write-Host "`nRetrieved properties from MSI files:"
+                $MSIProperties | Format-List
+                write-log -logFile $LogFile -Module $scriptName -Message "GetMSIProperties: properties retrieved successfully." -LogLevel "Information"
+            }
+        }
+        catch {
+            Write-Host "An error occurred while retrieving MSI properties: $_" -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "GetMSIProperties: error occurred: $_" -LogLevel "Error"
+            $exitCode = 1
+        }
     }
 }
 

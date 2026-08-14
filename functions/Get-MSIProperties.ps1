@@ -1,11 +1,4 @@
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory = $true)]
-    [string[]]$FilePath
-)
-
-function Get-MSIProperties()
-{
+function Get-MSIProperties() {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -14,10 +7,8 @@ function Get-MSIProperties()
 
     $Results = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-    foreach ($File in $FilePath)
-    {
-        try
-        {
+    foreach ($File in $FilePath) {
+        try {
             # Ensure the path is absolute
             $FullPath = (Resolve-Path $File).Path
 
@@ -35,8 +26,7 @@ function Get-MSIProperties()
                 FileName = Split-Path $FullPath -Leaf
             }
 
-            while ($null -ne ($Record = $View.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $View, $null)))
-            {
+            while ($null -ne ($Record = $View.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $View, $null))) {
                 $Name = $Record.GetType().InvokeMember("StringData", "GetProperty", $null, $Record, 1)
                 $Value = $Record.GetType().InvokeMember("StringData", "GetProperty", $null, $Record, 2)
                 $Properties[$Name] = $Value
@@ -49,16 +39,10 @@ function Get-MSIProperties()
             [System.Runtime.InteropServices.Marshal]::ReleaseComObject($Database) | Out-Null
             [System.Runtime.InteropServices.Marshal]::ReleaseComObject($WindowsInstaller) | Out-Null
         }
-        catch
-        {
+        catch {
             Write-Error "Failed to read MSI file '$File': $($_.Exception.Message)"
         }
     }
 
     return , $Results.ToArray()
 }
-
-# Usage:
-$global:MSIProperties = Get-MSIProperties -FilePath $FilePath
-#display in human readable form.
-$global:MSIProperties | Format-List
