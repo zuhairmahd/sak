@@ -987,7 +987,7 @@ if ($GetMSIProperties) {
 
         try {
             $MSIProperties = Get-MSIProperties -FilePath $MSIFilePath
-            if ($global:MSIProperties.Count -eq 0) {
+            if ($MSIProperties.Count -eq 0) {
                 Write-Host "No properties retrieved from the specified MSI files." -ForegroundColor Yellow
                 write-log -logFile $LogFile -Module $scriptName -Message "GetMSIProperties: no properties retrieved." -LogLevel "Warning"
             }
