@@ -574,24 +574,17 @@ if ($GetUninstallCommands) {
                 Write-Host "Registry path: $($product.RegistryPath)"
                 Write-Host "Registry Key:    $($product.RegKey)"
                 Write-Host "Install Location: $($product.InstallLocation)"
-                # Create export object
-                $exportObj = [PSCustomObject]@{
-                    ProductName             = $product.Name
-                    Version                 = $product.Version
-                    Publisher               = $product.Publisher
-                    SizeMB                  = $product.SizeMB
-                    InstallDate             = $product.InstallDate
-                    RegistryPath            = $product.RegistryPath
-                    RegistryKey             = $product.RegKey
-                    InstallLocation         = $product.InstallLocation
-                    IsMostLikely            = $product.IsMostLikely
-                    RawUninstallCmd         = $product.UninstallCmd
-                    UninstallFilePath       = $null
-                    UninstallArguments      = $null
-                    RawQuietUninstallCmd    = $product.QuietUninstall
-                    QuietUninstallFilePath  = $null
-                    QuietUninstallArguments = $null
+                # Build export object dynamically from all product properties
+                $exportHash = [ordered]@{}
+                foreach ($prop in $product.PSObject.Properties) {
+                    $exportHash[$prop.Name] = if ($null -eq $prop.Value) { "not provided" } else { $prop.Value }
                 }
+                $exportHash['UninstallFilePath'] = $null
+                $exportHash['UninstallArguments'] = $null
+                $exportHash['QuietUninstallFilePath'] = $null
+                $exportHash['QuietUninstallArguments'] = $null
+                $exportObj = [PSCustomObject]$exportHash
+
                 # Parse and display standard uninstall command
                 if (-not [string]::IsNullOrWhiteSpace($product.UninstallCmd)) {
                     Write-Host "`n  Raw Uninstall Command:" -ForegroundColor Cyan
@@ -635,44 +628,16 @@ if ($GetUninstallCommands) {
             Write-Host "===================================================================" -ForegroundColor Cyan
         }
         else {
-            # Single product - build export object from the mostLikelyMatch already displayed above
-            $exportObj = [PSCustomObject]@{
-                ProductName             = $mostLikely.Name
-                Version                 = $mostLikely.Version
-                Publisher               = $mostLikely.Publisher
-                SizeMB                  = $mostLikely.SizeMB
-                InstallDate             = $mostLikely.InstallDate
-                RegistryPath            = $mostLikely.RegistryPath
-                RegistryKey             = $mostLikely.RegKey
-                InstallLocation         = $mostLikely.InstallLocation
-                IsMostLikely            = $true
-                RawUninstallCmd         = $mostLikely.UninstallCmd
-                UninstallFilePath       = $(if ($parsed) {
-                        $parsed.FilePath
-                    }
-                    else {
-                        $null
-                    })
-                UninstallArguments      = $(if ($parsed) {
-                        $parsed.Arguments
-                    }
-                    else {
-                        $null
-                    })
-                RawQuietUninstallCmd    = $mostLikely.QuietUninstall
-                QuietUninstallFilePath  = $(if ($parsedQuiet) {
-                        $parsedQuiet.FilePath
-                    }
-                    else {
-                        $null
-                    })
-                QuietUninstallArguments = $(if ($parsedQuiet) {
-                        $parsedQuiet.Arguments
-                    }
-                    else {
-                        $null
-                    })
+            # Build export object dynamically from all product properties
+            $exportHash = [ordered]@{}
+            foreach ($prop in $uninstallData.mostLikelyMatch.PSObject.Properties) {
+                $exportHash[$prop.Name] = if ($null -eq $prop.Value) { "not provided" } else { $prop.Value }
             }
+            $exportHash['UninstallFilePath'] = if ($parsed) { $parsed.FilePath } else { $null }
+            $exportHash['UninstallArguments'] = if ($parsed) { $parsed.Arguments } else { $null }
+            $exportHash['QuietUninstallFilePath'] = if ($parsedQuiet) { $parsedQuiet.FilePath } else { $null }
+            $exportHash['QuietUninstallArguments'] = if ($parsedQuiet) { $parsedQuiet.Arguments } else { $null }
+            $exportObj = [PSCustomObject]$exportHash
             $exportData += $exportObj
         }
         # Export if requested
