@@ -1,45 +1,116 @@
 function Get-UninstallCommand() {
     <#
 .SYNOPSIS
-Retrieves uninstall command information for installed applications matching one or more keywords.
+Retrieves uninstall command information for installed applications.
 
 .DESCRIPTION
-Searches common 32-bit and 64-bit Windows uninstall registry locations under HKLM and HKCU for products whose DisplayName contains any of the provided keywords. Builds a list of matching products, de-duplicates them, computes size information, and identifies the most likely main product (largest EstimatedSize). Returns a summary object including all products and the mostLikelyMatch.
+Searches the 32-bit, 64-bit, and per-user Windows uninstall registry locations under HKLM
+and HKCU for installed products. Accepts either a structured product object or one or more
+keyword strings. Deduplicates results, computes size information, and identifies the most
+likely main product (largest EstimatedSize). Returns a summary object containing all matching
+products and the mostLikelyMatch if requested.
+
+Two search modes:
+  - Product mode   ($product): uses productName as the keyword. Filters results against
+                               productName, productVersion, and productPublisher according
+                               to the -strictMatch switch.
+  - Keyword mode   ($keywords): performs a wildcard contains-match ("*keyword*") against
+                                DisplayName for each supplied keyword.
+
+.PARAMETER product
+A PSCustomObject with the following properties used for registry matching:
+  - productName      [string] Required. Used as the search keyword.
+  - productVersion   [string] Optional. Used for match filtering.
+  - productPublisher [string] Optional. Used for match filtering.
+When supplied, -keywords is ignored.
 
 .PARAMETER keywords
-One or more keywords to match against the DisplayName of installed products. Matching is a contains match (e.g., "*keyword*") and is case-insensitive. If no keywords are provided, the function returns hasErrors = $true with a message.
+One or more strings to match against DisplayName (case-insensitive wildcard contains-match).
+Used only when -product is not provided. Returns hasErrors = $true when neither parameter
+is supplied.
+
+.PARAMETER GuessMostLikely
+When set, the product with the largest EstimatedSize is marked as the most likely candidate
+
+.PARAMETER strictMatch
+Only applies in product mode (-product). When set, all three fields (DisplayName,
+DisplayVersion, Publisher) must match exactly. When omitted, a product is included if at
+least one of the three fields matches.
 
 .OUTPUTS
-PSCustomObject
-- hasErrors [bool]            Indicates if any errors occurred or if input was invalid.
-- message [string]            Informational or error message.
-- products [PSCustomObject[]] Collection of matching products with properties:
-    Name, Version, UninstallCmd, QuietUninstall, SizeMB, SizeKB, InstallDate,
-    RegKey, Publisher, InstallLocation, RegistryPath, IsMostLikely
-- mostLikelyMatch [PSCustomObject] The product considered the main app (largest size), if found.
+PSCustomObject with the following properties:
+  hasErrors       [bool]            True if input was invalid or an error occurred.
+  message         [string]          Informational or error description.
+  products        [PSCustomObject[]] All unique matching products, sorted by size descending.
+                                    Each product exposes: Name, Version, UninstallCmd,
+                                    QuietUninstall, SizeMB, SizeKB, InstallDate, RegKey,
+                                    Publisher, InstallLocation, RegistryPath, IsMostLikely,
+                                    and all available Bundle*/Engine*/URL* registry fields.
+  mostLikelyMatch [PSCustomObject]  The product with the largest EstimatedSize (IsMostLikely = $true).
 
 .EXAMPLE
+# Keyword search — finds all products whose DisplayName contains "Chrome"
+Get-UninstallCommand -keywords "Chrome"
+
+.EXAMPLE
+# Multi-keyword search
 Get-UninstallCommand -keywords "Google", "Chrome"
 
 .EXAMPLE
-Get-UninstallCommand -keywords "Zoom"
+# Product-object search with loose matching
+$p = [PSCustomObject]@{ productName = "Zoom"; productVersion = "6.0.0"; productPublisher = "Zoom Video Communications" }
+Get-UninstallCommand -product $p
+
+.EXAMPLE
+# Product-object search requiring all three fields to match exactly
+Get-UninstallCommand -product $p -strictMatch
 
 .NOTES
-Requires read access to the following registry locations:
-- HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
-- HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
-- HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
-Uses external helper write-log and assumes $LogFile and $scriptName are available in scope.
+Requires read access to:
+  HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
+  HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
+  HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
+Depends on the write-log helper and expects $LogFile and $scriptName in the caller's scope.
 
 .LINK
 https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
     #>
     [CmdletBinding()]
     param(
-        [string[]]$keywords
+        [PSCustomobject]$product,
+        [string[]]$keywords,
+        [switch]$GuessMostLikely,
+        [switch]$strictMatch,
+        [switch]$All
     )
 
     $functionName = $MyInvocation.MyCommand.Name
+    if ($product -and $null -ne $product.productName -and -not $all) {
+        Write-Log -LogFile $LogFile -Module $scriptName -Message "Searching for product with specific properties: $($product | Out-String)" -LogLevel "Information"
+        $productSearch = $true
+        if ($null -ne $keywords -or $keywords.count -eq 0) {
+            $keywords = @($product.productName)
+        }
+    }
+    elseif ($keywords -and $keywords.count -gt 0 -and -not $all) {
+        Write-Log -LogFile $LogFile -Module $scriptName -Message "Searching for products with keywords: $($keywords -join ', ')" -LogLevel "Information"
+        $productSearch = $false
+    }
+    elseif ($all) {
+        Write-Log -LogFile $LogFile -Module $scriptName -Message "Searching for all products." -LogLevel "Information"
+        $productSearch = $false
+        $keywords = @('All')
+    }
+    else {
+        Write-Log -LogFile $LogFile -Module $scriptName -Message "No keywords or product properties provided. Returning empty list." -LogLevel "Warning"
+        return @{
+            hasErrors       = $true
+            message         = "No keywords or product properties provided. Returning empty list."
+            products        = @()
+            mostLikelyMatch = $null
+        }
+    }
+
     # Comprehensive list of uninstall registry keys (64-bit and 32-bit)
     $UninstallKeys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -52,15 +123,17 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
         products        = @()
         mostLikelyMatch = $null
     }
+    if ($GuessMostLikely) {
+        Write-Verbose "[$functionName] GuessMostLikely switch is set. Will identify the product with the largest size as the most likely candidate."
+        write-log -logFile $LogFile -Module $scriptName -Message "GuessMostLikely switch is set. Will identify the product with the largest size as the most likely candidate." -LogLevel "Information"
+        $uninstallationCommands.mostLikelyMatch = $null
+    }
+    else {
+        Write-Verbose "[$functionName] GuessMostLikely switch is not set. Most likely candidate will not be identified."
+        write-log -logFile $LogFile -Module $scriptName -Message "GuessMostLikely switch is not set. Most likely candidate will not be identified." -LogLevel "Information"
+    }
     Write-Verbose "[$functionName] Get uninstallation commands for applications with keywords: $($keywords -join ', ')"
     write-log -logFile $LogFile -Module $scriptName -Message "Get uninstallation commands for applications with keywords: $($keywords -join ', ')" -LogLevel "Information"
-    if ($keywords.count -eq 0) {
-        Write-Verbose "[$functionName] No keywords provided. Returning empty list."
-        write-log -logFile $LogFile -Module $scriptName -Message "No keywords provided. Returning empty list." -LogLevel "Warning"
-        $uninstallationCommands.message = "No keywords provided. Returning empty list."
-        $uninstallationCommands.hasErrors = $true
-        return $uninstallationCommands
-    }
     Write-Verbose "[$functionName] Searching for $($keywords.count) keyword(s) across $($UninstallKeys.count) registry locations."
     write-log -logFile $LogFile -Module $scriptName -Message "Searching for $($keywords.count) keyword(s) across $($UninstallKeys.count) registry locations." -LogLevel "Information"
     # Collect all matching products
@@ -77,57 +150,58 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
                     write-log -logFile $LogFile -Module $scriptName -Message "Registry key does not exist: $key" -LogLevel "Verbose"
                     continue
                 }
+
                 $registryItems = Get-ChildItem $key -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Found $($registryItems.Count) items in $key"
                 write-log -logFile $LogFile -Module $scriptName -Message "Found $($registryItems.Count) items in $key" -LogLevel "Verbose"
                 foreach ($item in $registryItems) {
                     try {
                         $props = Get-ItemProperty $item.PSPath -ErrorAction SilentlyContinue
-                        if ($keyword -and $props.DisplayName -and $props.DisplayName -like "*$keyword*") {
-                            Write-Verbose "[$functionName] Found matching product: '$($props.DisplayName)' (Version: $($props.DisplayVersion))"
-                            write-log -logFile $LogFile -Module $scriptName -Message "Found matching product: '$($props.DisplayName)' (Version: $($props.DisplayVersion), Size: $($props.EstimatedSize) KB)" -LogLevel "Information"
-                            # Create product object with all relevant details
-                            $productObj = [PSCustomObject]@{
-                                Name                  = $props.DisplayName
-                                Version               = if ($props.DisplayVersion) { $props.DisplayVersion } else { $null }
-                                UninstallCmd          = if ($props.UninstallString) { $props.UninstallString } else { $null }
-                                QuietUninstall        = if ($props.QuietUninstallString) { $props.QuietUninstallString } else { $null }
-                                # Size is stored in Registry as Kilobytes (KB)
-                                SizeMB                = if ($props.EstimatedSize) { [math]::Round($props.EstimatedSize / 1024, 2) } else { 0 }
-                                SizeKB                = if ($props.EstimatedSize) { $props.EstimatedSize } else { 0 }
-                                InstallDate           = $props.InstallDate
-                                RegKey                = $item.PSChildName # This is often the Product Code GUID
-                                Publisher             = if ($props.Publisher) { $props.Publisher } else { $null }
-                                InstallLocation       = $props.InstallLocation
-                                BundleCachePath       = if ($props.BundleCachePath) { $props.BundleCachePath } else { $null }
-                                BundleUpgradeCode     = if ($props.BundleUpgradeCode) { $props.BundleUpgradeCode } else { $null }
-                                BundleAddonCode       = if ($props.BundleAddonCode) { $props.BundleAddonCode } else { $null }
-                                BundleDetectCode      = if ($props.BundleDetectCode) { $props.BundleDetectCode } else { $null }
-                                BundlePatchCode       = if ($props.BundlePatchCode) { $props.BundlePatchCode } else { $null }
-                                BundleVersion         = if ($props.BundleVersion) { $props.BundleVersion } else { $null }
-                                VersionMajor          = if ($props.VersionMajor) { $props.VersionMajor } else { $null }
-                                VersionMinor          = if ($props.VersionMinor) { $props.VersionMinor } else { $null }
-                                BundleProviderKey     = if ($props.BundleProviderKey) { $props.BundleProviderKey } else { $null }
-                                BundleTag             = if ($props.BundleTag) { $props.BundleTag } else { $null }
-                                EngineVersion         = if ($props.EngineVersion) { $props.EngineVersion } else { $null }
-                                EngineProtocolVersion = if ($props.EngineProtocolVersion) { $props.EngineProtocolVersion } else { $null }
-                                DisplayIcon           = if ($props.DisplayIcon) { $props.DisplayIcon } else { $null }
-                                HelpLink              = if ($props.HelpLink) { $props.HelpLink } else { $null }
-                                HelpTelephone         = if ($props.HelpTelephone) { $props.HelpTelephone } else { $null }
-                                URLInfoAbout          = if ($props.URLInfoAbout) { $props.URLInfoAbout } else { $null }
-                                URLUpdateInfo         = if ($props.URLUpdateInfo) { $props.URLUpdateInfo } else { $null }
-                                AuthorizedCDFPrefix   = if ($props.AuthorizedCDFPrefix) { $props.AuthorizedCDFPrefix } else { $null }
-                                Comments              = if ($props.Comments) { $props.Comments } else { $null }
-                                Contact               = if ($props.Contact) { $props.Contact } else { $null }
-                                SettingsIdentifier    = if ($props.SettingsIdentifier) { $props.SettingsIdentifier } else { $null }
-                                InstallSource         = if ($props.InstallSource) { $props.InstallSource } else { $null }
-                                Readme                = if ($props.Readme) { $props.Readme } else { $null }
-                                SystemComponent       = if ($props.SystemComponent -eq 1) { $true } else { $false }
-                                WindowsInstaller      = if ($props.WindowsInstaller -eq 1) { $true } else { $false }
-                                Language              = if ($props.Language) { $props.Language } else { $null }
-                                RegistryPath          = $key
-                                IsMostLikely          = $false
+                        if ($keyword -and $props.DisplayName -and $props.DisplayName -like "*$keyword*" -or $all) {
+                            Write-Verbose "[$functionName] Found matching product: '$($props.DisplayName)' (Version: $($props.DisplayVersion), Publisher: $($props.Publisher), Size: $($props.EstimatedSize) KB)"
+                            write-log -logFile $LogFile -Module $scriptName -Message "Found matching product: '$($props.DisplayName)' (Version: $($props.DisplayVersion), Publisher: $($props.Publisher), Size: $($props.EstimatedSize) KB)" -LogLevel "Information"
+                            if ($productSearch -and $strictMatch) {
+                                if ($props.DisplayName -ne $product.productName -or $props.DisplayVersion -ne $product.productVersion -or $props.Publisher -ne $product.productPublisher) {
+                                    Write-Verbose "[$functionName] Skipping product '$($props.DisplayName)' due to strict match criteria."
+                                    write-log -logFile $LogFile -Module $scriptName -Message "Skipping product '$($props.DisplayName)' due to strict match criteria." -LogLevel "Verbose"
+                                    continue
+                                }
                             }
+                            elseif ($productSearch -and -not $strictMatch) {
+                                if ($props.DisplayName -ne $product.productName -and $props.DisplayVersion -ne $product.productVersion -and $props.Publisher -ne $product.productPublisher) {
+                                    Write-Verbose "[$functionName] Skipping product '$($props.DisplayName)' due to non-strict match criteria."
+                                    write-log -logFile $LogFile -Module $scriptName -Message "Skipping product '$($props.DisplayName)' due to non-strict match criteria." -LogLevel "Verbose"
+                                    continue
+                                }
+                            }
+                            # Create product object with all relevant details
+
+                            $productObj = [PSCustomObject]@{}
+                            foreach ($prop in $props.PSObject.Properties) {
+                                $name = $prop.Name
+                                # Unwrap complex objects; strip PS provider prefix from path strings
+                                $value = if ($null -ne $prop.Value -and $prop.Value -isnot [string] -and $prop.Value -isnot [ValueType] -and $prop.Value.PSObject.Properties['Name']) {
+                                    $prop.Value.Name
+                                }
+                                elseif ($prop.Value -is [string] -and $prop.Value -match '^\w[\w.]+\\(\w+)::(.+)$') {
+                                    $Matches[2]
+                                }
+                                else {
+                                    $prop.Value
+                                }
+                                Write-Verbose "[$functionName] Processing property: Name='$name', Value='$V alue'"
+                                write-log -logFile $LogFile -Module $scriptName -Message "Processing property: Name='$name', Value='$Value'" -LogLevel "Verbose"
+                                $productObj | Add-Member -MemberType NoteProperty -Name $name -Value $value -Force
+                            }
+                            #Add additional transformation properties
+                            $UninstallCmd = if ($props.QuietUninstallString) { $props.QuietUninstallString } elseif ($props.UninstallString) { $props.UninstallString } else { $null }
+                            $productObj | Add-Member -MemberType NoteProperty -Name UninstallCmd -Value $UninstallCmd -Force
+                            $SizeMB = if ($props.EstimatedSize) { [math]::Round($props.EstimatedSize / 1024, 2) } else { 0 }
+                            $productObj | Add-Member -MemberType NoteProperty -Name SizeMB -Value $SizeMB -Force
+                            $SizeKB = if ($props.EstimatedSize) { $props.EstimatedSize } else { 0 }
+                            $productObj | Add-Member -MemberType NoteProperty -Name SizeKB -Value $SizeKB -Force
+                            $RegKey = $item.PSChildName # This is often the Product Code GUID
+                            $productObj | Add-Member -MemberType NoteProperty -Name RegKey -Value $RegKey -Force
                             $allProducts += $productObj
                             Write-Verbose "[$functionName] Product details: Name='$($productObj.Name)', Size=$($productObj.SizeMB)MB, UninstallCmd='$($productObj.UninstallCmd)'"
                             write-log -logFile $LogFile -Module $scriptName -Message "Product details: RegKey='$($productObj.RegKey)', Size=$($productObj.SizeMB)MB, Publisher='$($productObj.Publisher)'" -LogLevel "Verbose"
@@ -148,58 +222,7 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
         }
     }
 
-    Write-Verbose "[$functionName] Total products found before deduplication: $($allProducts.Count)"
-    write-log -logFile $LogFile -Module $scriptName -Message "Total products found before deduplication: $($allProducts.Count)" -LogLevel "Information"
-
-    # Deduplicate products using UninstallCmd and RegKey as unique identifiers
-    # Handle null/empty UninstallCmd values properly
-    $uniqueProducts = @{}
-    $skippedDuplicates = 0
-
-    foreach ($product in $allProducts) {
-        # Create a unique key - use RegKey if UninstallCmd is null/empty
-        $uniqueKey = if ([string]::IsNullOrWhiteSpace($product.UninstallCmd)) {
-            if ([string]::IsNullOrWhiteSpace($product.RegKey)) {
-                # If both are null, skip this product (shouldn't happen but handle gracefully)
-                Write-Verbose "[$functionName] Skipping product with no UninstallCmd or RegKey: '$($product.Name)'"
-                write-log -logFile $LogFile -Module $scriptName -Message "Skipping product with no UninstallCmd or RegKey: '$($product.Name)'" -LogLevel "Warning"
-                continue
-            }
-            "RegKey:$($product.RegKey)"
-        }
-        else {
-            "Uninstall:$($product.UninstallCmd)"
-        }
-
-        if (-not $uniqueProducts.ContainsKey($uniqueKey)) {
-            $uniqueProducts[$uniqueKey] = $product
-            Write-Verbose "[$functionName] Added unique product: '$($product.Name)' with key: $uniqueKey"
-            write-log -logFile $LogFile -Module $scriptName -Message "Added unique product: '$($product.Name)' with key: $uniqueKey" -LogLevel "Verbose"
-        }
-        else {
-            $skippedDuplicates++
-            Write-Verbose "[$functionName] Skipped duplicate product: '$($product.Name)' (key already exists: $uniqueKey)"
-            write-log -logFile $LogFile -Module $scriptName -Message "Skipped duplicate product: '$($product.Name)'" -LogLevel "Verbose"
-        }
-    }
-    Write-Verbose "[$functionName] Removed $skippedDuplicates duplicate entries"
-    write-log -logFile $LogFile -Module $scriptName -Message "Removed $skippedDuplicates duplicate entries. Unique products: $($uniqueProducts.Count)" -LogLevel "Information"
-    # Convert to array and find the most likely candidate based on largest size
-    $uniqueProductArray = @($uniqueProducts.Values)
-    if ($uniqueProductArray.Count -gt 0) {
-        # Find product with largest size (most likely the main application)
-        $mostLikelyCandidate = $uniqueProductArray | Sort-Object -Property SizeKB -Descending | Select-Object -First 1
-        if ($mostLikelyCandidate) {
-            $mostLikelyCandidate.IsMostLikely = $true
-            $uninstallationCommands.mostLikelyMatch = $mostLikelyCandidate
-            Write-Verbose "[$functionName] Most likely candidate: '$($mostLikelyCandidate.Name)' (Size: $($mostLikelyCandidate.SizeMB)MB)"
-            write-log -logFile $LogFile -Module $scriptName -Message "Most likely candidate identified: '$($mostLikelyCandidate.Name)' (Size: $($mostLikelyCandidate.SizeMB)MB, Version: $($mostLikelyCandidate.Version))" -LogLevel "Information"
-        }
-
-        # Sort products by size (largest first) for better organization
-        $uniqueProductArray = $uniqueProductArray | Sort-Object -Property SizeKB -Descending
-    }
-    $uninstallationCommands.products = @($uniqueProductArray)
+    $uninstallationCommands.products = @($allProducts)
     Write-Verbose "[$functionName] Returning total of $($uninstallationCommands.products.count) unique products found."
     write-log -logFile $LogFile -Module $scriptName -Message "Returning total of $($uninstallationCommands.products.count) unique products. Most likely: '$($mostLikelyCandidate.Name)'" -LogLevel "Information"
     return $uninstallationCommands
