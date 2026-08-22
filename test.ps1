@@ -265,6 +265,9 @@ try {
     Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $inputString" -ForegroundColor Cyan
     Write-Host "===================================================================" -ForegroundColor Cyan
     write-log -logFile $LogFile -Module $scriptName -Message "Found $($uninstallData.products.Count) product(s) to uninstall." -LogLevel "Information"
+    $global:allProducts = $uninstallData.products
+
+
     $product = $uninstallData.products[0]
     $availableParameters = @{}
     foreach ($key in $product.PSObject.Properties.Name) {
