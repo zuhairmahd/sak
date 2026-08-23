@@ -259,7 +259,7 @@ $menuItems = @(
     },
     @{
         name        = "GetUninstallCommands"
-        description = "Discover quiet uninstall commands for installed software based on keywords."
+        description = "Discover uninstall commands for installed software based on keywords."
     },
     @{
         name        = "KillGuiltyProcesses"
@@ -530,6 +530,15 @@ if ($GetUninstallCommands) {
                 Write-Host "    FilePath:  $($parsed.FilePath)"
                 Write-Host "    Arguments: $($parsed.Arguments)"
             }
+            # Parse and display quiet uninstall command if exists
+            if (-not [string]::IsNullOrWhiteSpace($mostLikely.QuietUninstall)) {
+                Write-Host "`n  Raw Quiet Uninstall Command:" -ForegroundColor Cyan
+                Write-Host "    $($mostLikely.QuietUninstall)"
+                $parsedQuiet = ConvertFrom-UninstallCommand -cmd $mostLikely.QuietUninstall
+                Write-Host "  Parsed Quiet Uninstall Command:" -ForegroundColor Cyan
+                Write-Host "    FilePath:  $($parsedQuiet.FilePath)"
+                Write-Host "    Arguments: $($parsedQuiet.Arguments)"
+            }
             Write-Host "`n===================================================================" -ForegroundColor Green
         }
         # Collection for export
@@ -559,25 +568,40 @@ if ($GetUninstallCommands) {
                 }
                 $exportHash['UninstallFilePath'] = $null
                 $exportHash['UninstallArguments'] = $null
+                $exportHash['QuietUninstallFilePath'] = $null
+                $exportHash['QuietUninstallArguments'] = $null
                 $exportObj = [PSCustomObject]$exportHash
-
                 # Parse and display standard uninstall command
                 if (-not [string]::IsNullOrWhiteSpace($product.UninstallCmd)) {
                     Write-Host "`n  Raw Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.UninstallCmd)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw uninstall command: $($product.UninstallCmd)" -LogLevel "Verbose"
-
                     $parsed = ConvertFrom-UninstallCommand -cmd $product.UninstallCmd
                     Write-Host "  Parsed Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    FilePath:  $($parsed.FilePath)"
                     Write-Host "    Arguments: $($parsed.Arguments)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Parsed - FilePath: $($parsed.FilePath), Arguments: $($parsed.Arguments)" -LogLevel "Information"
-
                     $exportObj.UninstallFilePath = $parsed.FilePath
                     $exportObj.UninstallArguments = $parsed.Arguments
                 }
                 else {
                     Write-Host "`n  No standard uninstall command available" -ForegroundColor Yellow
+                }
+                # Parse and display quiet uninstall command if exists
+                if (-not [string]::IsNullOrWhiteSpace($product.QuietUninstall)) {
+                    Write-Host "`n  Raw Quiet Uninstall Command:" -ForegroundColor Cyan
+                    Write-Host "    $($product.QuietUninstall)"
+                    write-log -logFile $LogFile -Module $scriptName -Message "Raw quiet uninstall command: $($product.QuietUninstall)" -LogLevel "Verbose"
+                    $parsedQuiet = ConvertFrom-UninstallCommand -cmd $product.QuietUninstall
+                    Write-Host "  Parsed Quiet Uninstall Command:" -ForegroundColor Cyan
+                    Write-Host "    FilePath:  $($parsedQuiet.FilePath)"
+                    Write-Host "    Arguments: $($parsedQuiet.Arguments)"
+                    write-log -logFile $LogFile -Module $scriptName -Message "Parsed Quiet - FilePath: $($parsedQuiet.FilePath), Arguments: $($parsedQuiet.Arguments)" -LogLevel "Information"
+                    $exportObj.QuietUninstallFilePath = $parsedQuiet.FilePath
+                    $exportObj.QuietUninstallArguments = $parsedQuiet.Arguments
+                }
+                else {
+                    Write-Host "`n  No quiet uninstall command available" -ForegroundColor DarkGray
                 }
                 $exportData += $exportObj
             }

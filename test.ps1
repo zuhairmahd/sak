@@ -248,7 +248,7 @@ $AdminMessage = "You must be an administrator to perform this operation. Please 
 #endregion define variables
 
 try {
-    $global:uninstallData = Get-UninstallCommand -keywords "Python" -NoEmptyStrings -GuessMostLikely
+    $global:uninstallData = Get-UninstallCommand -keywords "Python" -NoEmptyStrings
     if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
