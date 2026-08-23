@@ -187,13 +187,20 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
                                 Write-Verbose "[$functionName] Processing property: Key='$name', Value='$value'"
                                 write-log -logFile $LogFile -Module $scriptName -Message "Processing property: Key='$name', Value='$value'" -LogLevel "Verbose"
                                 if ($NoEmptyStrings -and [string]::IsNullOrWhiteSpace($value)) { continue }
+                                if ($name -eq 'InstallDate') {
+                                    Write-Verbose "[$functionName] Normalizing InstallDate value: $value"
+                                    write-log -logFile $LogFile -Module $scriptName -Message "Normalizing InstallDate value: $value" -LogLevel "Verbose"
+                                    $value = [datetime]::ParseExact($value, 'yyyyMMdd', $null)
+                                }
                                 $productObj | Add-Member -MemberType NoteProperty -Name $name -Value $value -Force
                                 if ($name -eq 'PSPath') {
-                                    #Add a property called RegistryPath with the value of PSPath
+                                    Write-Verbose "[$functionName] Adding RegistryPath property with value: $value"
+                                    write-log -logFile $LogFile -Module $scriptName -Message "Adding RegistryPath property with value: $value" -LogLevel "Verbose"
                                     $productObj | Add-Member -MemberType NoteProperty -Name RegistryPath -Value $value -Force
                                 }
                                 if ($name -eq 'PSChildName') {
-                                    #Add a property called RegKey with the value of PSChildName
+                                    Write-Verbose "[$functionName] Adding RegKey property with value: $value"
+                                    write-log -logFile $LogFile -Module $scriptName -Message "Adding RegKey property with value: $value" -LogLevel "Verbose"
                                     $productObj | Add-Member -MemberType NoteProperty -Name RegKey -Value $value -Force
                                 }
                             }

@@ -173,82 +173,12 @@ else {
 #region define variables
 $scriptName = $MyInvocation.MyCommand.Name
 $logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
+$keywords = if ($keyword) { @($keyword) } else { @("Python") }
 $exitCode = 0
-$guiltyProcessesToStop = (
-    "dm",
-    "acrobat",
-    "acrocef",
-    "acrolicapp",
-    "adobecollabsync",
-    "adobe_licensing_wf_acro",
-    "adobe_licensing_wf_helper_acro",
-    "chrome",
-    "excel",
-    "explorer",
-    "firefox",
-    "msaccess",
-    "msedge",
-    "msedgewebview2",
-    "officeclicktorun",
-    "onedrive",
-    "onenote",
-    "onenotem",
-    "outlook",
-    "powerpnt",
-    "teams",
-    "winword"
-)
-$menuItems = @(
-    @{
-        name        = "CheckRegKeyExists"
-        description = "Check if registry keys from a file exist with correct values."
-    },
-    @{
-        name        = "GetUninstallCommands"
-        description = "Discover uninstall commands for installed software based on keywords."
-    },
-    @{
-        name        = "KillGuiltyProcesses"
-        description = "Close most common interfering processes before performing operations."
-    },
-    @{
-        name        = "ManageServices"
-        description = "Start, stop, restart, or check status of Windows services."
-    },
-    @{
-        name        = "CreateZIPArchive"
-        description = "Create a ZIP archive from a list of files."
-    },
-    @{
-        name        = "ExtractEmailAddresses"
-        description = "Extract all unique email addresses from a text file."
-    },
-    @{
-        name        = "DownloadFileFromURL"
-        description = "Download a file from a URL to a local destination."
-    },
-    @{
-        name        = "GetLocalComputerInfo"
-        description = "Retrieve session type, client OS, name, and IP address of this computer."
-    },
-    @{
-        name        = "WhoisLookup"
-        description = "Perform a WHOIS lookup on a domain name or IP address."
-    },
-    @{
-        name        = "CleanupNetworkProfiles"
-        description = "Remove network profiles matching a keyword from the system."
-    },
-    @{
-        name        = "GetMSIProperties"
-        description = "Retrieve properties from MSI files."
-    }
-)
-$AdminMessage = "You must be an administrator to perform this operation. Please run the script as an administrator."
 #endregion define variables
 
 try {
-    $global:uninstallData = Get-UninstallCommand -keywords "Python" -NoEmptyStrings
+    $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings
     if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
