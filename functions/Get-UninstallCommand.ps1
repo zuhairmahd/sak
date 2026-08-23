@@ -81,6 +81,8 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
         [string[]]$keywords,
         [switch]$GuessMostLikely,
         [switch]$strictMatch,
+        [switch]$NoEmptyStrings,
+        [switch]$NoUniqueObjects,
         [switch]$All
     )
 
@@ -122,15 +124,6 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
         message         = ''
         products        = @()
         mostLikelyMatch = $null
-    }
-    if ($GuessMostLikely) {
-        Write-Verbose "[$functionName] GuessMostLikely switch is set. Will identify the product with the largest size as the most likely candidate."
-        write-log -logFile $LogFile -Module $scriptName -Message "GuessMostLikely switch is set. Will identify the product with the largest size as the most likely candidate." -LogLevel "Information"
-        $uninstallationCommands.mostLikelyMatch = $null
-    }
-    else {
-        Write-Verbose "[$functionName] GuessMostLikely switch is not set. Most likely candidate will not be identified."
-        write-log -logFile $LogFile -Module $scriptName -Message "GuessMostLikely switch is not set. Most likely candidate will not be identified." -LogLevel "Information"
     }
     Write-Verbose "[$functionName] Get uninstallation commands for applications with keywords: $($keywords -join ', ')"
     write-log -logFile $LogFile -Module $scriptName -Message "Get uninstallation commands for applications with keywords: $($keywords -join ', ')" -LogLevel "Information"
@@ -174,8 +167,8 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
                                     continue
                                 }
                             }
-                            # Create product object with all relevant details
 
+                            # Create product object with all relevant details
                             $productObj = [PSCustomObject]@{}
                             foreach ($prop in $props.PSObject.Properties) {
                                 $name = $prop.Name
@@ -191,17 +184,33 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
                                 }
                                 Write-Verbose "[$functionName] Processing property: Name='$name', Value='$V alue'"
                                 write-log -logFile $LogFile -Module $scriptName -Message "Processing property: Name='$name', Value='$Value'" -LogLevel "Verbose"
+                                if ($NoEmptyStrings -and [string]::IsNullOrWhiteSpace($value)) { continue }
                                 $productObj | Add-Member -MemberType NoteProperty -Name $name -Value $value -Force
+                                if ($name -eq 'PSPath') {
+                                    #Add a property called RegistryPath with the value of PSPath
+                                    $productObj | Add-Member -MemberType NoteProperty -Name RegistryPath -Value $value -Force
+                                }
+                                if ($name -eq 'PSChildName') {
+                                    #Add a property called RegKey with the value of PSChildName
+                                    $productObj | Add-Member -MemberType NoteProperty -Name RegKey -Value $value -Force
+                                }
                             }
-                            #Add additional transformation properties
+                            #region Add additional transformation properties for backward compatibility
+                            $name = $props.DisplayName
+                            $productObj | Add-Member -MemberType NoteProperty -Name Name -Value $name -Force
                             $UninstallCmd = if ($props.QuietUninstallString) { $props.QuietUninstallString } elseif ($props.UninstallString) { $props.UninstallString } else { $null }
+                            if ([string]::IsNullOrWhiteSpace($UninstallCmd) -and $NoEmptyStrings) { continue }
                             $productObj | Add-Member -MemberType NoteProperty -Name UninstallCmd -Value $UninstallCmd -Force
-                            $SizeMB = if ($props.EstimatedSize) { [math]::Round($props.EstimatedSize / 1024, 2) } else { 0 }
+                            $SizeMB = if ($props.EstimatedSize) { [math]::Round($props.EstimatedSize / 1024, 2) } else { $null }
+                            if ([string]::IsNullOrWhiteSpace($SizeMB) -and $NoEmptyStrings) { continue }
                             $productObj | Add-Member -MemberType NoteProperty -Name SizeMB -Value $SizeMB -Force
                             $SizeKB = if ($props.EstimatedSize) { $props.EstimatedSize } else { 0 }
+                            if ([string]::IsNullOrWhiteSpace($SizeKB) -and $NoEmptyStrings) { continue }
                             $productObj | Add-Member -MemberType NoteProperty -Name SizeKB -Value $SizeKB -Force
-                            $RegKey = $item.PSChildName # This is often the Product Code GUID
-                            $productObj | Add-Member -MemberType NoteProperty -Name RegKey -Value $RegKey -Force
+                            $Version = if ($props.version) { $props.version } elseif ($props.DisplayVersion) { $props.DisplayVersion } else { $null }
+                            if ([string]::IsNullOrWhiteSpace($Version) -and $NoEmptyStrings) { continue }
+                            $productObj | Add-Member -MemberType NoteProperty -Name Version -Value $Version -Force
+                            #endregion Add additional transformation properties for backward compatibility
                             $allProducts += $productObj
                             Write-Verbose "[$functionName] Product details: Name='$($productObj.Name)', Size=$($productObj.SizeMB)MB, UninstallCmd='$($productObj.UninstallCmd)'"
                             write-log -logFile $LogFile -Module $scriptName -Message "Product details: RegKey='$($productObj.RegKey)', Size=$($productObj.SizeMB)MB, Publisher='$($productObj.Publisher)'" -LogLevel "Verbose"
@@ -221,9 +230,19 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
             $uninstallationCommands.message += "Error occurred while searching for products with keyword '$keyword': $_`n"
         }
     }
+    Write-Verbose "Found $($allProducts.Count) products before deduplication."
+    Write-Log -logFile $LogFile -Module $scriptName -Message "Found $($allProducts.Count) products before deduplication." -LogLevel "Verbose"
+    #Deduplicate the products list by making sure that all of uninstall command, productName, ProductVersion, ProductPublisher and registry key are unique
+    $uninstallationCommands.products = $allProducts
+    if ($NoUniqueObjects) {
+        $uninstallationCommands.products = $allProducts | Sort-Object -Property DisplayName, DisplayVersion, Publisher, UninstallCmd, RegKey -Unique
+    }
+    Write-Verbose "[$functionName] Found a total of $($uninstallationCommands.products.count) unique products found."
+    write-log -logFile $LogFile -Module $scriptName -Message "Found a total of $($uninstallationCommands.products.count) unique products. Most likely: '$($mostLikelyCandidate.Name)'" -LogLevel "Information"
+    if ($GuessMostLikely) {
+        $mostLikelyCandidate = $uninstallationCommands.products | Sort-Object -Property SizeMB -Descending | Select-Object -First 1
+        $uninstallationCommands.mostLikelyMatch = if ($mostLikelyCandidate) { $mostLikelyCandidate } else { $null }
+    }
 
-    $uninstallationCommands.products = @($allProducts)
-    Write-Verbose "[$functionName] Returning total of $($uninstallationCommands.products.count) unique products found."
-    write-log -logFile $LogFile -Module $scriptName -Message "Returning total of $($uninstallationCommands.products.count) unique products. Most likely: '$($mostLikelyCandidate.Name)'" -LogLevel "Information"
     return $uninstallationCommands
 }

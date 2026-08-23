@@ -248,7 +248,7 @@ $AdminMessage = "You must be an administrator to perform this operation. Please 
 #endregion define variables
 
 try {
-    $uninstallData = Get-UninstallCommand -keywords "Python"
+    $global:uninstallData = Get-UninstallCommand -keywords "Python" -NoEmptyStrings -GuessMostLikely
     if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
@@ -265,25 +265,19 @@ try {
     Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $inputString" -ForegroundColor Cyan
     Write-Host "===================================================================" -ForegroundColor Cyan
     write-log -logFile $LogFile -Module $scriptName -Message "Found $($uninstallData.products.Count) product(s) to uninstall." -LogLevel "Information"
-    $global:allProducts = $uninstallData.products
 
-
-    $product = $uninstallData.products[0]
-    $availableParameters = @{}
-    foreach ($key in $product.PSObject.Properties.Name) {
-        $value = $product.$key
-        if ($value -ne $null) {
-            if (-not $availableParameters.ContainsKey($key)) {
-                $availableParameters[$key] = @()
-            }
-            $availableParameters[$key] += $value
+    $allProducts = $uninstallData
+    foreach ($product in $allProducts.products) {
+        #Display the product name, version and publisher first and only once
+        Write-Host "Name: $($product.DisplayName)"
+        Write-Host "Version: $($product.DisplayVersion)"
+        Write-Host "Publisher: $($product.Publisher)"
+        foreach ($key in $product.PSObject.properties.name) {
+            if ($key -in @("DisplayName", "DisplayVersion", "Publisher")) { continue }
+            $name = $key
+            $value = $product.$key
+            Write-Host "${name}: $value"
         }
-    }
-
-    #Now display all available parameters
-    foreach ($key in $availableParameters.Keys) {
-        $values = $availableParameters[$key] -join ", "
-        Write-Host "${key}: $values"
     }
 }
 catch {
