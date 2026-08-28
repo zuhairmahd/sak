@@ -1,6 +1,7 @@
 [CmdletBinding(DefaultParameterSetName = "Menu")]
 param(
-    [string]$keyword
+    [string[]]$keyword,
+    [switch]$All
 )
 
 #region helper functions
@@ -178,7 +179,9 @@ $exitCode = 0
 #endregion define variables
 
 try {
-    $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings
+    Write-Host "Looking for products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
+    if ($all) { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings -All } else { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings }
+    Write-Host "Looked for products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
     if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
@@ -186,13 +189,13 @@ try {
         return
     }
     elseif ($uninstallData.products.Count -eq 0) {
-        Write-Host "No products found matching keywords: Python. Nothing to uninstall."
-        write-log -logFile $LogFile -Module $scriptName -Message "No products found matching keywords: Python. Nothing to uninstall." -LogLevel "Information"
+        Write-Host "No products found matching keywords: $($keywords -join ', '). Nothing to uninstall."
+        write-log -logFile $LogFile -Module $scriptName -Message "No products found matching keywords: $($keywords -join ', '). Nothing to uninstall." -LogLevel "Information"
         $exitCode = 0
         return
     }
     Write-Host "`n===================================================================" -ForegroundColor Cyan
-    Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $inputString" -ForegroundColor Cyan
+    Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $($keywords -join ', ')" -ForegroundColor Cyan
     Write-Host "===================================================================" -ForegroundColor Cyan
     write-log -logFile $LogFile -Module $scriptName -Message "Found $($uninstallData.products.Count) product(s) to uninstall." -LogLevel "Information"
 
