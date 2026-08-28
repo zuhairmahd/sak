@@ -181,7 +181,7 @@ $exitCode = 0
 try {
     Write-Host "Looking for products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
     if ($all) { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings -All } else { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings }
-    Write-Host "Looked for products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
+    Write-Host "Found $($uninstallData.products.Count) products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
     if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
