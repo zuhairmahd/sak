@@ -178,6 +178,8 @@ $keywords = if ($keyword) { @($keyword) } else { @("Python") }
 $exitCode = 0
 #endregion define variables
 
+
+
 try {
     Write-Host "Looking for products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
     if ($all) { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings -All } else { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings }
@@ -210,6 +212,13 @@ try {
             $name = $key
             $value = $product.$key
             Write-Host "${name}: $value"
+        }
+        $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
+        if ($fileDetectionRule.success) {
+            Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
+        }
+        else {
+            Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
         }
     }
 }
