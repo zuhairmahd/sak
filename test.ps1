@@ -204,22 +204,25 @@ try {
     $allProducts = $uninstallData
     foreach ($product in $allProducts.products) {
         #Display the product name, version and publisher first and only once
+        Write-Host "Product #$($allProducts.products.IndexOf($product) + 1)"
         Write-Host "Name: $($product.DisplayName)"
         Write-Host "Version: $($product.DisplayVersion)"
         Write-Host "Publisher: $($product.Publisher)"
         foreach ($key in $product.PSObject.properties.name) {
-            if ($key -in @("DisplayName", "DisplayVersion", "Publisher")) { continue }
+            # if ($key -in @("DisplayName", "DisplayVersion", "Publisher")) { continue }
             $name = $key
             $value = $product.$key
             Write-Host "${name}: $value"
         }
-        $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
-        if ($fileDetectionRule.success) {
-            Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
-        }
-        else {
-            Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
-        }
+        Write-Host "`n------------------------`n"
+        # $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
+        # if ($fileDetectionRule.success) {
+        #     Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
+        # }
+        # else {
+        #     Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
+        # }
+
     }
 }
 catch {
