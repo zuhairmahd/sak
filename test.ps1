@@ -209,20 +209,20 @@ try {
         Write-Host "Version: $($product.DisplayVersion)"
         Write-Host "Publisher: $($product.Publisher)"
         foreach ($key in $product.PSObject.properties.name) {
-            # if ($key -in @("DisplayName", "DisplayVersion", "Publisher")) { continue }
-            $name = $key
-            $value = $product.$key
-            Write-Host "${name}: $value"
+            if ($key -notin @("DisplayName", "DisplayVersion", "Publisher")) {
+                $name = $key
+                $value = $product.$key
+                Write-Host "${name}: $value"
+            }
         }
         Write-Host "`n------------------------`n"
         # $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
-        # if ($fileDetectionRule.success) {
-        #     Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
-        # }
-        # else {
-        #     Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
-        # }
-
+        if ($fileDetectionRule.success) {
+            Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
+        }
+        else {
+            Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
+        }
     }
 }
 catch {
