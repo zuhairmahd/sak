@@ -3,18 +3,14 @@ param(
     # No parameters — runs interactive menu
     [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
     [switch]$CheckRegKeyExists,
-
     [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
     [switch]$GetUninstallCommands,
     [Parameter(ParameterSetName = "GetUninstallCommands")]
     [string]$ExportPath,
-
     [Parameter(ParameterSetName = "KillGuiltyProcesses", Mandatory = $true)]
     [switch]$KillGuiltyProcesses,
-
     [Parameter(ParameterSetName = "CleanupNetworkProfiles", Mandatory = $true)]
     [switch]$CleanupNetworkProfiles,
-
     [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [switch]$ManageServices,
     [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
@@ -22,44 +18,36 @@ param(
     [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [ValidateSet("Start", "Stop", "Restart", "Status")]
     [string]$ServiceOperation,
-
     [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [switch]$CreateZIPArchive,
     [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [string]$ArchiveDestination,
-
     [Parameter(ParameterSetName = "CheckProductInstallStatus", Mandatory = $true)]
     [switch]$CheckProductInstallStatus,
     [Parameter(ParameterSetName = "CheckProductInstallStatus")]
     [string]$ProductStatusExportPath,
-
     [Parameter(ParameterSetName = "ExtractEmailAddresses", Mandatory = $true)]
     [switch]$ExtractEmailAddresses,
     [Parameter(ParameterSetName = "ExtractEmailAddresses")]
     [string]$EmailExportPath,
-
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [switch]$DownloadFileFromURL,
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [string]$DownloadURL,
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [string]$DownloadDestination,
-
     [Parameter(ParameterSetName = "GetLocalComputerInfo", Mandatory = $true)]
     [switch]$GetLocalComputerInfo,
-
     [Parameter(ParameterSetName = "GetMSIProperties", Mandatory = $true)]
     [switch]$GetMSIProperties,
     [Parameter(ParameterSetName = "GetMSIProperties", Mandatory = $true)]
     [string[]]$MSIFilePath,
-
     [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
     [switch]$WhoisLookup,
     [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
     [string]$WhoisTarget,
     [Parameter(ParameterSetName = "WhoisLookup")]
     [string]$WhoisServer,
-
     # Shared input across sets that need a file path or keyword(s)
     [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
     [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
@@ -497,7 +485,7 @@ if ($CheckRegKeyExists) {
 }
 
 if ($GetUninstallCommands) {
-    $uninstallData = Get-UninstallCommand -keywords $inputString
+    $uninstallData = Get-UninstallCommand -keywords $inputString -GuessMostLikely -NoEmptyStrings
     if ($uninstallData.hasErrors) {
         Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
         write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
@@ -530,10 +518,10 @@ if ($GetUninstallCommands) {
             if (-not ([string]::IsNullOrEmpty($mostLikely.InstallLocation))) {
                 Write-Host "Install Location: $($mostLikely.InstallLocation)"
             }
-            Write-Host "Registry path: $($mostLikely.RegistryPath)"
+            Write-Host "Full Registry path: $($mostLikely.RegistryPath)"
             Write-Host "Registry Key:    $($mostLikely.RegKey)"
             Write-Host "`n--- Uninstall Commands ---" -ForegroundColor Yellow
-            # Parse and display standard uninstall command
+            # Parse and display uninstall command
             if (-not [string]::IsNullOrWhiteSpace($mostLikely.UninstallCmd)) {
                 Write-Host "  Raw Uninstall Command:" -ForegroundColor Cyan
                 Write-Host "    $($mostLikely.UninstallCmd)"
@@ -559,7 +547,6 @@ if ($GetUninstallCommands) {
             Write-Host "`n`n*** ALL MATCHING PRODUCTS ***" -ForegroundColor Cyan
             foreach ($product in $uninstallData.products) {
                 write-log -logFile $LogFile -Module $scriptName -Message "Processing uninstall for: $($product.Name) (Version: $($product.Version), Size: $($product.SizeMB)MB, Publisher: $($product.Publisher))" -LogLevel "Information"
-
                 Write-Host "`n-------------------------------------------------------------------" -ForegroundColor DarkGray
                 if ($product.IsMostLikely) {
                     Write-Host "Product Name:    $($product.Name) [MOST LIKELY]" -ForegroundColor Green
@@ -584,19 +571,16 @@ if ($GetUninstallCommands) {
                 $exportHash['QuietUninstallFilePath'] = $null
                 $exportHash['QuietUninstallArguments'] = $null
                 $exportObj = [PSCustomObject]$exportHash
-
                 # Parse and display standard uninstall command
                 if (-not [string]::IsNullOrWhiteSpace($product.UninstallCmd)) {
                     Write-Host "`n  Raw Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.UninstallCmd)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw uninstall command: $($product.UninstallCmd)" -LogLevel "Verbose"
-
                     $parsed = ConvertFrom-UninstallCommand -cmd $product.UninstallCmd
                     Write-Host "  Parsed Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    FilePath:  $($parsed.FilePath)"
                     Write-Host "    Arguments: $($parsed.Arguments)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Parsed - FilePath: $($parsed.FilePath), Arguments: $($parsed.Arguments)" -LogLevel "Information"
-
                     $exportObj.UninstallFilePath = $parsed.FilePath
                     $exportObj.UninstallArguments = $parsed.Arguments
                 }
@@ -608,13 +592,11 @@ if ($GetUninstallCommands) {
                     Write-Host "`n  Raw Quiet Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    $($product.QuietUninstall)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Raw quiet uninstall command: $($product.QuietUninstall)" -LogLevel "Verbose"
-
                     $parsedQuiet = ConvertFrom-UninstallCommand -cmd $product.QuietUninstall
                     Write-Host "  Parsed Quiet Uninstall Command:" -ForegroundColor Cyan
                     Write-Host "    FilePath:  $($parsedQuiet.FilePath)"
                     Write-Host "    Arguments: $($parsedQuiet.Arguments)"
                     write-log -logFile $LogFile -Module $scriptName -Message "Parsed Quiet - FilePath: $($parsedQuiet.FilePath), Arguments: $($parsedQuiet.Arguments)" -LogLevel "Information"
-
                     $exportObj.QuietUninstallFilePath = $parsedQuiet.FilePath
                     $exportObj.QuietUninstallArguments = $parsedQuiet.Arguments
                 }

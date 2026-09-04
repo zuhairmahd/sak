@@ -1,0 +1,235 @@
+[CmdletBinding(DefaultParameterSetName = "Menu")]
+param(
+    [string[]]$keyword,
+    [switch]$All
+)
+
+#region helper functions
+function ConvertFrom-UninstallCommand() {
+    <#
+    .SYNOPSIS
+        Parses an uninstall command string into FilePath and Arguments components.
+    .PARAMETER cmd
+        The uninstall command string to parse.
+    .OUTPUTS
+        Returns a PSCustomObject with FilePath and Arguments properties.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$cmd
+    )
+
+    $functionName = $MyInvocation.MyCommand.Name
+    $filePath = $null
+    $arguments = $null
+
+    if ($cmd -match '^"([^"]+)"(.*)$') {
+        # Quoted path (e.g., "C:\Program Files\App\uninstall.exe" /args)
+        $filePath = $matches[1]
+        $arguments = $matches[2].Trim()
+        Write-Verbose "[$functionName] Parsed quoted path: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Parsed quoted path: FilePath='$filePath', Arguments='$arguments'"
+    }
+    elseif ($cmd -match '^(MsiExec\.exe)\s+(.*)$') {
+        # Special case for MsiExec.exe (case-insensitive)
+        $filePath = "MsiExec.exe"
+        $arguments = $matches[2].Trim()
+        Write-Verbose "[$functionName] Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Parsed MsiExec.exe command: FilePath='$filePath', Arguments='$arguments'"
+    }
+    elseif ($cmd -match '^([A-Z]:\\.+\.exe)\s+(.*)$') {
+        # Unquoted full path with .exe extension
+        Write-Verbose "[$functionName] Parsing unquoted full path with .exe extension: $cmd"
+        write-log -logFile $logFile -Module $functionName -Message "Parsing unquoted full path with .exe extension: $cmd"
+        $exeIndex = $cmd.LastIndexOf('.exe')
+        if ($exeIndex -ge 0) {
+            $filePath = $cmd.Substring(0, $exeIndex + 4).Trim()
+            $arguments = $cmd.Substring($exeIndex + 4).Trim()
+        }
+        else {
+            $filePath = $matches[1]
+            $arguments = $matches[2].Trim()
+        }
+        Write-Verbose "[$functionName] Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Parsed unquoted full path with .exe extension: FilePath='$filePath', Arguments='$arguments'"
+    }
+    elseif ($cmd -match '^(\S+\.exe)\s*(.*)$') {
+        # Simple executable name without path
+        $filePath = $matches[1]
+        $arguments = $matches[2].Trim()
+        Write-Verbose "[$functionName] Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Parsed simple executable name: FilePath='$filePath', Arguments='$arguments'"
+    }
+    else {
+        # Fallback: treat the whole command as filepath
+        $filePath = $cmd.Trim()
+        $arguments = ""
+        Write-Verbose "[$functionName] Fallback parsing: FilePath='$filePath', Arguments='$arguments'"
+        write-log -logFile $logFile -Module $functionName -Message "Fallback parsing: FilePath='$filePath', Arguments='$arguments'"
+    }
+
+    return [PSCustomObject]@{
+        FilePath  = $filePath
+        Arguments = $arguments
+    }
+}
+
+function Get-UserInput() {
+    <#
+    .SYNOPSIS
+        Prompts the user for input with a specified message.
+    .PARAMETER message
+        The message to display to the user.
+    .OUTPUTS
+        Returns the user's input as a string.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$message,
+        [ValidateSet("string", "int", "bool", "array")]
+        [string]$inputType = "string"
+    )
+
+    $functionName = $MyInvocation.MyCommand.Name
+    Write-Verbose "[$functionName] Prompting user with message: $message"
+    if ($inputType -eq "int") {
+        while ($true) {
+            $userInput = Read-Host -Prompt $message
+            if ([int]::TryParse($userInput, [ref]$null)) {
+                break
+            }
+            else {
+                Write-Host "Invalid input. Please enter a valid integer." -ForegroundColor Yellow
+                #beep
+                [console]::beep(1000, 300)
+            }
+        }
+        Write-Verbose "[$functionName] User input received: $userInput"
+        return [int]$userInput
+    }
+    elseif ($inputType -eq "bool") {
+        while ($true) {
+            $userInput = Read-Host -Prompt "$message (y/n)"
+            if ($userInput -match '^(y|yes)$') {
+                Write-Verbose "[$functionName] User input received: True"
+                return $true
+            }
+            elseif ($userInput -match '^(n|no)$') {
+                Write-Verbose "[$functionName] User input received: False"
+                return $false
+            }
+            else {
+                Write-Host "Invalid input. Please enter 'y' for yes or 'n' for no." -ForegroundColor Yellow
+                #beep
+                [console]::beep(1000, 300)
+            }
+        }
+    }
+    elseif ($inputType -eq "array") {
+        Write-Host "$message (Enter multiple values one per line, finish with an empty line):"
+        $inputArray = [System.Collections.ArrayList]@()
+        while ($true) {
+            $line = Read-Host -Prompt "> "
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                break
+            }
+            [void]$inputArray.Add($line.Trim())
+        }
+        Write-Verbose "[$functionName] User input received: $($inputArray -join ', ')"
+        return $inputArray
+    }
+    # Default to string input
+    $userInput = Read-Host -Prompt $message
+    Write-Verbose "[$functionName] User input received: $userInput"
+    return $userInput
+}
+#endregion helper functions
+
+#region import functions.
+. $PSScriptRoot\functions\Find-FolderPath.ps1
+. $PSScriptRoot\functions\Test-PowerShellSyntax.ps1
+$functionsFolder = Find-FolderPath -Path "$psscriptRoot" -FolderName "functions"
+if (Test-Path $functionsFolder) {
+    Write-Verbose "[$scriptName] Importing functions from $functionsFolder"
+    $functions = Get-ChildItem -Path "$functionsFolder\*.ps1" -File
+    foreach ($function in $functions) {
+        Write-Verbose " [$scriptName] Importing function $function"
+        $syntaxCheck = Test-PowerShellSyntax -File $function
+        if ($syntaxCheck.HasErrors) {
+            Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
+            write-log -logFile $logFile -Module $scriptName -Message "Syntax errors found in $($function.FullName). Skipping import." -LogLevel "Error"
+            continue
+        }
+        . $function.FullName
+    }
+}
+else {
+    Write-Host 'Cannot find the functions folder. Exiting script.' -ForegroundColor Red
+    exit 1
+}
+#endregion import functions.
+
+#region define variables
+$scriptName = $MyInvocation.MyCommand.Name
+$logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
+$keywords = if ($keyword) { @($keyword) } else { @("Python") }
+$exitCode = 0
+#endregion define variables
+
+
+
+try {
+    Write-Host "Looking for products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
+    if ($all) { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings -All } else { $global:uninstallData = Get-UninstallCommand -keywords $keywords -NoEmptyStrings }
+    Write-Host "Found $($uninstallData.products.Count) products matching keywords: $($keywords -join ', ')" -ForegroundColor Cyan
+    if ($uninstallData.hasErrors) {
+        Write-Host "Error discovering products: $($uninstallData.message)" -ForegroundColor Yellow
+        write-log -logFile $LogFile -Module $scriptName -Message "Error discovering products: $($uninstallData.message)" -LogLevel "Warning"
+        $exitCode = 1
+        return
+    }
+    elseif ($uninstallData.products.Count -eq 0) {
+        Write-Host "No products found matching keywords: $($keywords -join ', '). Nothing to uninstall."
+        write-log -logFile $LogFile -Module $scriptName -Message "No products found matching keywords: $($keywords -join ', '). Nothing to uninstall." -LogLevel "Information"
+        $exitCode = 0
+        return
+    }
+    Write-Host "`n===================================================================" -ForegroundColor Cyan
+    Write-Host "Found $($uninstallData.products.Count) product(s) matching keyword(s): $($keywords -join ', ')" -ForegroundColor Cyan
+    Write-Host "===================================================================" -ForegroundColor Cyan
+    write-log -logFile $LogFile -Module $scriptName -Message "Found $($uninstallData.products.Count) product(s) to uninstall." -LogLevel "Information"
+
+    $allProducts = $uninstallData
+    foreach ($product in $allProducts.products) {
+        #Display the product name, version and publisher first and only once
+        Write-Host "Product #$($allProducts.products.IndexOf($product) + 1)"
+        Write-Host "Name: $($product.DisplayName)"
+        Write-Host "Version: $($product.DisplayVersion)"
+        Write-Host "Publisher: $($product.Publisher)"
+        foreach ($key in $product.PSObject.properties.name) {
+            if ($key -notin @("DisplayName", "DisplayVersion", "Publisher")) {
+                $name = $key
+                $value = $product.$key
+                Write-Host "${name}: $value"
+            }
+        }
+        Write-Host "`n------------------------`n"
+        # $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
+        if ($fileDetectionRule.success) {
+            Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
+        }
+        else {
+            Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
+        }
+    }
+}
+catch {
+    write-log -logFile $LogFile -Module $scriptName -Message "Exception occurred: $($_.Exception.Message)" -LogLevel "Error"
+}
+finally {
+    # Perform any necessary cleanup here
+    Write-Host "Script execution completed with exit code $exitCode"
+    exit $exitCode
+}
