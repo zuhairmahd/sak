@@ -13,7 +13,7 @@ function Get-GraphAccessToken {
         [string[]]$Scope,
         [parameter(parameterSetName = 'delegated')]
         [ValidateSet('PublicAuthFlow', 'Interactive', 'Private')]
-        [string]$AuthType = 'Private',
+        [string]$AuthType = 'PublicAuthFlow',
         [parameter(parameterSetName = 'delegated')]
         [switch]$ForceNewToken,
         [parameter(parameterSetName = 'delegated')]
@@ -1298,6 +1298,13 @@ function Get-GraphAccessToken {
         $encodedScopes = [uri]::EscapeDataString($scopesFormatted)
 
         $automaticFlowSuccess = $false
+        # PKCE (RFC 7636) — required for native client redirect URIs (AADSTS9002325)
+        $codeVerifierBytes = New-Object byte[] 32
+        [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($codeVerifierBytes)
+        $codeVerifier = [Convert]::ToBase64String($codeVerifierBytes) -replace '\+', '-' -replace '/', '_' -replace '='
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        $codeChallenge = [Convert]::ToBase64String($sha256.ComputeHash([System.Text.Encoding]::ASCII.GetBytes($codeVerifier))) -replace '\+', '-' -replace '/', '_' -replace '='
+        $sha256.Dispose()
         switch ($AuthType) {
             PublicAuthFlow {
                 Write-Verbose "[$functionName] Using device auth flow."
@@ -1517,7 +1524,7 @@ function Get-GraphAccessToken {
                 try {
                     Write-Verbose "[$functionName] Starting HTTP listener at $redirectUri"
                     Write-Log -LogFile $LogFile -Module $functionName -Message "Starting HTTP listener at $redirectUri"
-                    $authUrl = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/authorize?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirectUri&response_mode=query&scope=$encodedScopes&state=$state"
+                    $authUrl = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/authorize?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirectUri&response_mode=query&scope=$encodedScopes&state=$state&code_challenge=$codeChallenge&code_challenge_method=S256"
                     Write-Verbose "[$functionName] Authorization URL: $authUrl"
                     Write-Log -LogFile $LogFile -Module $functionName -Message "Authorization URL: $authUrl"
                     Write-Host "Opening browser for user authentication and consent..."
@@ -1550,16 +1557,6 @@ function Get-GraphAccessToken {
                     $automaticFlowSuccess = $false
                 }
             }
-            'Private' {
-                Write-Verbose "[$functionName] Using non-interactive mode (manual code input)"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Using non-interactive mode (manual code input)"
-                $redirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient"
-                Write-Verbose "[$functionName] Redirect URI: $redirectUri"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Redirect URI: $redirectUri"
-                $encodedRedirectUri = [uri]::EscapeDataString($redirectUri)
-                Write-Verbose "[$functionName] Encoded Redirect URI: $encodedRedirectUri"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Encoded Redirect URI: $encodedRedirectUri"
-            }
             default {
                 Write-Error "Invalid AuthType specified. Use 'interactive' or 'device'."
                 Write-Log -LogFile $LogFile -Module $functionName -Message "Invalid AuthType specified: $AuthType" -LogLevel Error
@@ -1572,7 +1569,7 @@ function Get-GraphAccessToken {
             Write-Log -LogFile $LogFile -Module $functionName -Message "Automatic flow was not successful or auth is set to private, falling back to manual code input"
             Write-Verbose "[$functionName] Automatic flow was not successful or auth is set to private, falling back to manual code input"
             # Step 1: Open the authorization URL
-            $authUrl = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/authorize?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirectUri&response_mode=query&scope=$encodedScopes&state=$state"
+            $authUrl = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/authorize?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirectUri&response_mode=query&scope=$encodedScopes&state=$state&code_challenge=$codeChallenge&code_challenge_method=S256"
             Write-Host "Please open the following URL in your browser to authenticate:`n$authUrl"
             Write-Log -LogFile $LogFile -Module $functionName -Message "Authorization URL: $authUrl"
             Write-Host "Opening browser for user authentication and consent..."
@@ -1610,6 +1607,7 @@ function Get-GraphAccessToken {
                 redirect_uri  = $redirectUri
                 grant_type    = "authorization_code"
                 scope         = $scopesFormatted
+                code_verifier = $codeVerifier
             }
             Write-Verbose "[$functionName] Token request parameters:"
             Write-Verbose "[$functionName]   Endpoint: $tokenEndpoint"
