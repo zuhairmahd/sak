@@ -28,6 +28,7 @@ param(
 
 . (Join-Path $PSScriptRoot "get-GraphAccessToken.ps1")
 . (Join-Path $PSScriptRoot "Write-Log.ps1")
+. (Join-Path $PSScriptRoot "Invoke-GraphAPI.ps1")
 
 $script:logFile = Join-Path $PSScriptRoot "test.log"
 $params = @{
@@ -48,4 +49,7 @@ if ($CacheType) { $params.CacheType = $CacheType }
 if ($APIVersion) { $params.APIVersion = $APIVersion }
 
 
-$global:accessToken = Get-GraphAccessToken @params
+$accessToken = Get-GraphAccessToken @params
+$uri = "users"
+$global:users = Invoke-GraphAPI -accessToken $accessToken -ResourcePath $uri -method "GET"
+

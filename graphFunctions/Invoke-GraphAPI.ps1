@@ -1,67 +1,4 @@
-function CallGraphAPI()
-{
-    <#
-    .SYNOPSIS
-    Executes HTTP requests to Microsoft Graph API with comprehensive error handling and pagination.
-
-    .DESCRIPTION
-    This function is the core Graph API client that handles all HTTP requests to Microsoft Graph endpoints.
-    It supports both single and batch resource path processing, automatic pagination for large result sets,
-    OData query parameters (filter, search, select), various HTTP methods (GET, POST, PATCH, DELETE),
-    consistency level headers for advanced queries, and comprehensive error handling with retry logic.
-
-    .PARAMETER accessToken
-    The Microsoft Graph API access token for authentication. This parameter is mandatory.
-
-    .PARAMETER ResourcePath
-    The Graph API resource path or array of paths. Supports single string or string array for batch processing.
-    This parameter is mandatory.
-
-    .PARAMETER APIVersion
-    The Graph API version to use. Default is 'beta'. Can be 'v1.0' or 'beta'.
-
-    .PARAMETER method
-    The HTTP method: 'get' (default), 'post', 'patch', 'put', or 'delete'.
-
-    .PARAMETER Filter
-    OData $filter query parameter for filtering results.
-
-    .PARAMETER Search
-    OData $search query parameter for searching. Requires consistencyLevel.
-
-    .PARAMETER ExtraParameters
-    Additional OData query parameters (e.g., "$select=id,displayName&$top=10").
-
-    .PARAMETER headers
-    Custom HTTP headers hashtable to include in the request.
-
-    .PARAMETER body
-    Request body for POST/PATCH/PUT operations (JSON string).
-
-    .PARAMETER consistencyLevel
-    When specified, adds ConsistencyLevel=eventual header (required for $search and some $count operations).
-
-    .PARAMETER secureString
-    When specified, returns access token as SecureString instead of plain text.
-
-    .OUTPUTS
-    System.Management.Automation.PSCustomObject or System.Array
-    Returns the API response value property (single object or array), or complete response object.
-    For batch processing, returns array of results. Returns $null on error.
-
-    .EXAMPLE
-    $users = CallGraphAPI -accessToken $token -ResourcePath "users" -Filter "startswith(displayName,'John')"
-    $device = CallGraphAPI -accessToken $token -ResourcePath "deviceManagement/managedDevices/abc123"
-    $result = CallGraphAPI -accessToken $token -ResourcePath "devices" -method "post" -body $jsonBody
-
-    .NOTES
-    Handles automatic pagination via @odata.nextLink for large result sets.
-    Supports batch resource path processing for multiple endpoints.
-    Includes retry logic with exponential backoff for transient errors.
-    Processes OData filter conditions via ProcessFilterCondition function.
-    Comprehensive error logging and verbose output for debugging.
-    Compatible with PowerShell 5.1.
-    #>
+function Invoke-GraphAPI {
     [CmdletBinding()]
     param
     (
@@ -80,15 +17,88 @@ function CallGraphAPI()
         [switch]$secureString
     )
 
+    function ProcessFilterCondition {
+        [CmdletBinding()]
+        param(
+            [string]$condition
+        )
+
+        $functionName = $MyInvocation.MyCommand.Name
+        Write-Verbose "[$functionName] Processing filter condition: $condition"
+        # Check if this is a function-based filter (contains, startswith, endswith)
+        Write-Verbose "[$functionName] Checking for function-based filter..."
+        if ($condition -match '(startswith|contains|endswith)\s*\(([^,]+),\s*([^)]+)\)') {
+            Write-Verbose "[$functionName] Found function-based filter: $($Matches[1])"
+            $filterOperator = $Matches[1]
+            Write-Verbose "[$functionName] Filter Operator: $filterOperator"
+            $filterKey = $Matches[2].Trim()
+            Write-Verbose "[$functionName] Filter Key: $filterKey"
+            $filterValue = $Matches[3].Trim()
+            Write-Verbose "[$functionName] Filter Value: $filterValue"
+            # Remove quotes if present in the value
+            Write-Verbose "[$functionName] Removing quotes from filter value..."
+            $filterValue = $filterValue -replace "^'|'$", ""
+            Write-Verbose "[$functionName] Filter Value after removing double quotes: $filterValue"
+            $filterValue = $filterValue -replace '^"|"$', ""
+            Write-Verbose "[$functionName] Filter Value after removing single quotes: $filterValue"
+            Write-Verbose "[$functionName] Filter Key after removing quotes: $FilterKey"
+            Write-Verbose "[$functionName] Filter Value: $FilterValue"
+            Write-Verbose "[$functionName] Filter Operator: $FilterOperator"
+            $encodedFilterValue = [uri]::EscapeDataString($FilterValue)
+            Write-Verbose "[$functionName] Encoded Filter Value: $encodedFilterValue"
+            # Rebuild the function call with encoded value
+            $returnFilter = "$filterOperator($filterKey,'$encodedFilterValue')"
+            Write-Verbose "[$functionName] Returning filter: $returnFilter"
+            return $returnFilter
+        }
+        # Check for standard comparison operators
+        elseif ($condition -match '([^\s]+)\s+(eq|ne|gt|lt|ge|le)\s+(.+)') {
+            Write-Verbose "[$functionName] Not a function based filter. Checking for standard comparison operators..."
+            $filterKey = $Matches[1].Trim()
+            $filterOperator = $Matches[2].Trim()
+            $filterValue = $Matches[3].Trim()
+            Write-Verbose "[$functionName] Filter Key: $FilterKey"
+            Write-Verbose "[$functionName] Filter Operator: $FilterOperator"
+            Write-Verbose "[$functionName] Filter Value: $FilterValue"
+            # Special handling for null and empty string
+            Write-Verbose "[$functionName] Checking for null or empty string..."
+            if ($filterValue -eq "null" -or $filterValue -eq "''" -or $filterValue -eq '""') {
+                Write-Verbose "[$functionName] Filter value is null or empty string."
+                Write-Verbose "[$functionName] Returning filter without encoding: $filterKey $filterOperator $filterValue"
+                # Don't encode null or empty string values
+                return "$filterKey $filterOperator $filterValue"
+            }
+            else {
+                # Remove quotes if present
+                Write-Verbose "[$functionName] Checking for quotes and removing from value if present..."
+                Write-Verbose "[$functionName] Value before processing: $filterValue"
+                $filterValue = $filterValue -replace "^'|'$", ""
+                Write-Verbose "[$functionName] Value after removing double quotes: $filterValue"
+                $filterValue = $filterValue -replace '^"|"$', ""
+                Write-Verbose "[$functionName] Value after removing single quotes: $filterValue"
+                Write-Verbose "[$functionName] Filter Key: $FilterKey"
+                Write-Verbose "[$functionName] Filter Value: $FilterValue"
+                $encodedFilterValue = [uri]::EscapeDataString($FilterValue)
+                Write-Verbose "[$functionName] Encoded Filter Value: $encodedFilterValue"
+                # Add quotes back for the encoded value
+                $returnFilter = "$filterKey $filterOperator '$encodedFilterValue'"
+                Write-Verbose "[$functionName] Returning filter: $returnFilter"
+                return $returnFilter
+            }
+        }
+        else {
+            Write-Verbose "[$functionName] Unrecognized filter condition format: $condition"
+            return $condition
+        }
+    }
+
     #region variables and logs
     $functionName = $MyInvocation.MyCommand.Name
-    if ($accessToken)
-    {
+    if ($accessToken) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Access token provided." -LogLevel "Information"
         Write-Verbose "[$functionName] Access token provided."
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] Access token not provided. Please provide a valid access token."
         Write-Log -LogFile $logFile -Module $functionName -Message "Access token not provided." -LogLevel "Error"
         return
@@ -108,8 +118,7 @@ function CallGraphAPI()
     Write-Verbose "[$functionName] isArrayInput: $isArrayInput"
     Write-Log -logFile $logFile -Module $functionName -Message "Function called with ResourcePath type: $($ResourcePath.GetType().FullName)" -LogLevel "Information"
     # Handle single-item array
-    if ($isArrayInput -and $ResourcePath.Count -eq 1)
-    {
+    if ($isArrayInput -and $ResourcePath.Count -eq 1) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Single-item array detected, processing as single request" -LogLevel "Verbose"
         Write-Verbose "[$functionName] Single-item array detected, processing as single request"
         $ResourcePath = $ResourcePath[0]
@@ -120,8 +129,7 @@ function CallGraphAPI()
     $batchThreshold = 1
     Write-Verbose "[$functionName] isBatchRequest: $isBatchRequest with a threshold of $batchThreshold"
     Write-Log -logFile $logFile -Module $functionName -Message "isBatchRequest: $isBatchRequest with a threshold of $batchThreshold" -LogLevel "Information"
-    if ($isBatchRequest -and $ResourcePath.Count -ge $batchThreshold)
-    {
+    if ($isBatchRequest -and $ResourcePath.Count -ge $batchThreshold) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Batch request detected: $($ResourcePath.Count) resources" -LogLevel "Information"
         Write-Verbose "[$functionName] Batch request detected: $($ResourcePath.Count) resources"
         # Attempt to use native Graph API $batch endpoint
@@ -132,39 +140,32 @@ function CallGraphAPI()
         $failureCount = 0
         # Split requests into batches of max 20
         $batches = @()
-        for ($i = 0; $i -lt $ResourcePath.Count; $i += $maxBatchSize)
-        {
+        for ($i = 0; $i -lt $ResourcePath.Count; $i += $maxBatchSize) {
             $batchSize = [Math]::Min($maxBatchSize, $ResourcePath.Count - $i)
             $batches += , @($ResourcePath[$i..($i + $batchSize - 1)])
         }
         Write-Log -LogFile $logFile -Module $functionName -Message "Processing $($ResourcePath.Count) requests in $($batches.Count) batch(es)" -LogLevel "Information"
         Write-Verbose "[$functionName] Processing $($ResourcePath.Count) requests in $($batches.Count) batch(es)"
         $batchIndex = 0
-        foreach ($batch in $batches)
-        {
+        foreach ($batch in $batches) {
             # Build batch request body according to Graph API spec
             $batchRequests = @()
             $requestId = 1
-            foreach ($path in $batch)
-            {
+            foreach ($path in $batch) {
                 # Build full URL for the request
                 $requestUrl = "/$path"
                 # Handle filters, search, and extra parameters in the URL
                 $queryParams = @()
-                if ($Filter)
-                {
+                if ($Filter) {
                     $queryParams += "`$filter=$([uri]::EscapeUriString($Filter))"
                 }
-                if ($Search)
-                {
+                if ($Search) {
                     $queryParams += "`$search=$([uri]::EscapeUriString($Search))"
                 }
-                if ($ExtraParameters)
-                {
+                if ($ExtraParameters) {
                     $queryParams += $ExtraParameters
                 }
-                if ($queryParams.Count -gt 0)
-                {
+                if ($queryParams.Count -gt 0) {
                     $requestUrl += "?" + ($queryParams -join "&")
                 }
                 # Build request object
@@ -174,18 +175,15 @@ function CallGraphAPI()
                     url    = $requestUrl
                 }
                 # Add headers if needed
-                if ($consistencyLevel)
-                {
+                if ($consistencyLevel) {
                     $batchRequest['headers'] = @{
                         'ConsistencyLevel' = 'eventual'
                     }
                 }
                 # Add body if provided
-                if ($body)
-                {
+                if ($body) {
                     $batchRequest['body'] = $body | ConvertFrom-Json
-                    if (-not $batchRequest.ContainsKey('headers'))
-                    {
+                    if (-not $batchRequest.ContainsKey('headers')) {
                         $batchRequest['headers'] = @{}
                     }
                     $batchRequest['headers']['Content-Type'] = 'application/json'
@@ -199,8 +197,7 @@ function CallGraphAPI()
             } | ConvertTo-Json -Depth 10
             Write-Log -LogFile $logFile -Module $functionName -Message "Sending batch with $($batchRequests.Count) requests to `$batch endpoint" -LogLevel "Verbose"
             # Send batch request to Graph API
-            try
-            {
+            try {
                 $batchHeaders = @{
                     'Authorization' = "Bearer $accessToken"
                     'Content-Type'  = 'application/json'
@@ -210,21 +207,18 @@ function CallGraphAPI()
                 # Process batch responses
                 # Renumber response IDs to be globally unique across all batches
                 $globalIdOffset = $batchIndex * $maxBatchSize
-                foreach ($response in $batchResponse.responses)
-                {
+                foreach ($response in $batchResponse.responses) {
                     # Adjust the response ID to be globally unique (1-240 instead of 1-20 per batch)
                     $globalId = ([int]$response.id) + $globalIdOffset
                     $response.id = $globalId
 
-                    if ($response.status -ge 200 -and $response.status -lt 300)
-                    {
+                    if ($response.status -ge 200 -and $response.status -lt 300) {
                         # Preserve the entire response object so downstream code can match by id
                         $allResults += $response
                         $successCount++
                         Write-Log -LogFile $logFile -Module $functionName -Message "Batch request $($response.id) succeeded (status: $($response.status))" -LogLevel "Verbose"
                     }
-                    else
-                    {
+                    else {
                         # Include failed responses so downstream code can handle them properly
                         $allResults += $response
                         $failureCount++
@@ -234,25 +228,21 @@ function CallGraphAPI()
                 }
                 $batchIndex++
             }
-            catch
-            {
+            catch {
                 Write-Log -LogFile $logFile -Module $functionName -Message "Batch endpoint failed: $($_.Exception.Message). Falling back to sequential processing." -LogLevel "Warning"
                 # Final fallback: process each resource path individually
-                foreach ($path in $batch)
-                {
+                foreach ($path in $batch) {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Processing resource sequentially: $path" -LogLevel "Verbose"
                     # Recursive call with single resource path
                     $result = CallGraphAPI -accessToken $accessToken -ResourcePath $path -APIVersion $APIVersion `
                         -method $method -Filter $Filter -Search $Search -ExtraParameters $ExtraParameters `
                         -body $body -consistencyLevel:$consistencyLevel -secureString:$secureString
                     # Check if result is an error status code (integer) or null
-                    if ($null -eq $result -or $result -is [int])
-                    {
+                    if ($null -eq $result -or $result -is [int]) {
                         $failureCount++
                         Write-Log -LogFile $logFile -Module $functionName -Message "Failed to process resource: $path (Status: $result)" -LogLevel "Warning"
                     }
-                    else
-                    {
+                    else {
                         $allResults += $result
                         $successCount++
                     }
@@ -280,8 +270,7 @@ function CallGraphAPI()
     #endregion
 
     #region Encode filter and add headers
-    if ($Filter)
-    {
+    if ($Filter) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Processing filter string: $Filter" -LogLevel "Verbose"
         Write-Log -LogFile $logFile -Module $functionName -Message "Splitting filter by logical operators while preserving operators." -LogLevel "Information"
         Write-Verbose "[$functionName] Splitting filter by logical operators while preserving operators."
@@ -295,8 +284,7 @@ function CallGraphAPI()
         Write-Log -LogFile $logFile -Module $functionName -Message "Found $($logicalOperaterMatches.Count) logical operators." -LogLevel "Verbose"
         Write-Verbose "[$functionName] Found $($logicalOperaterMatches.Count) logical operators."
         # If no logical operators, process as a single condition
-        if ($logicalOperaterMatches.Count -eq 0)
-        {
+        if ($logicalOperaterMatches.Count -eq 0) {
             Write-Log -LogFile $logFile -Module $functionName -Message "No logical operators found. Processing as a single filter condition." -LogLevel "Verbose"
             Write-Verbose "[$functionName] No logical operators found. Processing as a single filter condition."
             $processedFilter = ProcessFilterCondition -condition $Filter
@@ -306,13 +294,11 @@ function CallGraphAPI()
             Write-Log -LogFile $logFile -Module $functionName -Message "Encoded filter: $encodedFilter" -LogLevel "Information"
             Write-Verbose "[$functionName] Encoded filter: $encodedFilter"
         }
-        else
-        {
+        else {
             # Process each part of the filter
             Write-Log -LogFile $logFile -Module $functionName -Message "Logical operators found. Processing filter as multiple conditions." -LogLevel "Verbose"
             Write-Verbose "[$functionName] Logical operators found. Processing filter as multiple conditions."
-            foreach ($logicalOperatorMatch in $logicalOperaterMatches)
-            {
+            foreach ($logicalOperatorMatch in $logicalOperaterMatches) {
                 Write-Log -LogFile $logFile -Module $functionName -Message "Processing filter condition before logical operator: $($Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex))" -LogLevel "Debug"
                 Write-Verbose "[$functionName] Processing filter condition before logical operator: $($Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex))"
                 $condition = $Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex)
@@ -328,8 +314,7 @@ function CallGraphAPI()
                 Write-Verbose "[$functionName] Logical operators so far: $($logicalOperators -join ', ')"
             }
             # Don't forget the last part after the last logical operator
-            if ($lastIndex -lt $Filter.Length)
-            {
+            if ($lastIndex -lt $Filter.Length) {
                 Write-Log -LogFile $logFile -Module $functionName -Message "Processing filter condition after the last logical operator." -LogLevel "Verbose"
                 Write-Verbose "[$functionName] Processing filter condition after the last logical operator."
                 $condition = $Filter.Substring($lastIndex)
@@ -341,8 +326,7 @@ function CallGraphAPI()
             Write-Log -LogFile $logFile -Module $functionName -Message "Rebuilding the filter string with processed parts and logical operators." -LogLevel "Information"
             Write-Verbose "[$functionName] Rebuilding the filter string with processed parts and logical operators."
             $encodedFilter = $filterParts[0]
-            for ($i = 0; $i -lt $logicalOperators.Count; $i++)
-            {
+            for ($i = 0; $i -lt $logicalOperators.Count; $i++) {
                 $encodedFilter += " $($logicalOperators[$i]) $($filterParts[$i+1])"
                 Write-Log -LogFile $logFile -Module $functionName -Message "Adding logical operator: $($logicalOperators[$i])" -LogLevel "Information"
                 Write-Verbose "[$functionName] Adding logical operator: $($logicalOperators[$i])"
@@ -354,16 +338,14 @@ function CallGraphAPI()
         Write-Log -LogFile $logFile -Module $functionName -Message "Uri after applying filters: $encodedUri" -LogLevel "Information"
         Write-Verbose "[$functionName] Uri after applying filters: $encodedUri"
     }
-    else
-    {
+    else {
         Write-Log -LogFile $logFile -Module $functionName -Message "No filter provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No filter provided."
         $encodedUri = $uri
     }
 
     # Handle search parameter
-    if ($Search)
-    {
+    if ($Search) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Processing search parameter: $Search" -LogLevel "Verbose"
         Write-Verbose "[$functionName] Processing search parameter: $Search"
         # URL encode the search string
@@ -371,25 +353,21 @@ function CallGraphAPI()
         Write-Log -LogFile $logFile -Module $functionName -Message "Encoded search: $encodedSearch" -LogLevel "Information"
         Write-Verbose "[$functionName] Encoded search: $encodedSearch"
         # Add search parameter to URI
-        if ($encodedUri.Contains("?"))
-        {
+        if ($encodedUri.Contains("?")) {
             $encodedUri = "$encodedUri&`$search=$encodedSearch"
         }
-        else
-        {
+        else {
             $encodedUri = "$encodedUri`?`$search=$encodedSearch"
         }
         Write-Log -LogFile $logFile -Module $functionName -Message "Uri after applying search: $encodedUri" -LogLevel "Information"
         Write-Verbose "[$functionName] Uri after applying search: $encodedUri"
     }
-    else
-    {
+    else {
         Write-Log -LogFile $logFile -Module $functionName -Message "No search parameter provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No search parameter provided."
     }
 
-    if ($extraParameters)
-    {
+    if ($extraParameters) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Extra parameters provided." -LogLevel "Information"
         Write-Log -LogFile $logFile -Module $functionName -Message "Splitting the extra parameters by ampersand to get individual key-value pairs." -LogLevel "Information"
         Write-Verbose "[$functionName] Extra parameters provided."
@@ -399,14 +377,12 @@ function CallGraphAPI()
         $keyValuePairs = $extraParameters -split '&'
         Write-Log -LogFile $logFile -Module $functionName -Message "Found $($keyValuePairs.Count) key-value pairs." -LogLevel "Verbose"
         Write-Verbose "[$functionName] Found $($keyValuePairs.Count) key-value pairs."
-        foreach ($pair in $keyValuePairs)
-        {
+        foreach ($pair in $keyValuePairs) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Processing key-value pair: $pair" -LogLevel "Verbose"
             Write-Verbose "[$functionName] Processing key-value pair: $pair"
             # Split each pair by equals sign to separate key and value
             $keyAndValue = $pair -split '=', 2
-            if ($keyAndValue.Count -eq 2)
-            {
+            if ($keyAndValue.Count -eq 2) {
                 $key = $keyAndValue[0].Trim()
                 $value = $keyAndValue[1].Trim()
                 Write-Log -LogFile $logFile -Module $functionName -Message "Key: $key" -LogLevel "Information"
@@ -420,8 +396,7 @@ function CallGraphAPI()
                 # Add the formatted parameter to the list
                 $paramsList += "$formattedKey=$value"
             }
-            else
-            {
+            else {
                 Write-Warning "Invalid parameter format: $pair - skipping"
                 Write-Log -LogFile $logFile -Module $functionName -Message "Invalid parameter format: $pair - skipping" -LogLevel "Warning"
             }
@@ -434,27 +409,23 @@ function CallGraphAPI()
         Write-Log -LogFile $logFile -Module $functionName -Message "Final query string: $queryString" -LogLevel "Information"
         Write-Verbose "[$functionName] Final query string: $queryString"
         # Append the extra parameters to the URI
-        if ($filter -or $Search)
-        {
+        if ($filter -or $Search) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Adding extra parameters to the uri along with existing parameters." -LogLevel "Information"
             Write-Verbose "[$functionName] Adding extra parameters to the uri along with existing parameters."
             $encodedUri = "$encodedUri`&$queryString"
         }
-        else
-        {
+        else {
             Write-Log -LogFile $logFile -Module $functionName -Message "No filter or search provided. Adding extra parameters to the uri." -LogLevel "Information"
             Write-Verbose "[$functionName] No filter or search provided. Adding extra parameters to the uri."
             $encodedUri = "$encodedUri`?$queryString"
         }
     }
-    else
-    {
+    else {
         Write-Log -LogFile $logFile -Module $functionName -Message "No extra parameters provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No extra parameters provided."
     }
     # Build default headers with Authorization and Content-Type
-    if ($consistencyLevel)
-    {
+    if ($consistencyLevel) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Adding consistency level to the headers." -LogLevel "Information"
         Write-Verbose "[$functionName] Adding consistency level to the headers."
         $defaultHeaders = @{
@@ -463,8 +434,7 @@ function CallGraphAPI()
             ConsistencyLevel = 'Eventual'
         }
     }
-    else
-    {
+    else {
         Write-Log -LogFile $logFile -Module $functionName -Message "No consistency level provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No consistency level provided."
         $defaultHeaders = @{
@@ -474,12 +444,10 @@ function CallGraphAPI()
     }
 
     # Merge custom headers if provided (custom headers take precedence)
-    if ($headers)
-    {
+    if ($headers) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Custom headers provided. Merging with default headers." -LogLevel "Information"
         Write-Verbose "[$functionName] Custom headers provided. Merging with default headers."
-        foreach ($key in $headers.Keys)
-        {
+        foreach ($key in $headers.Keys) {
             $defaultHeaders[$key] = $headers[$key]
             Write-Log -LogFile $logFile -Module $functionName -Message "Added/Overridden header: $key" -LogLevel "Information"
             Write-Verbose "[$functionName] Added/Overridden header: $key"
@@ -498,22 +466,19 @@ function CallGraphAPI()
         UseBasicParsing = $true
     }
     #add headers parameter if it was passed
-    if ($headers)
-    {
+    if ($headers) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Headers provided. Adding to the request." -LogLevel "Information"
         Write-Verbose "[$functionName] Headers provided. Adding to the request."
         $restParams['Headers'] = $headers
     }
     # Only add Body parameter if it exists
-    if ($body)
-    {
+    if ($body) {
         Write-Log -LogFile $logFile -Module $functionName -Message "Body parameter provided. Adding to the request." -LogLevel "Information"
         Write-Verbose "[$functionName] Body parameter provided. Adding to the request."
         $restParams['Body'] = $body
     }
     #Add statusCodeVariable if we are running under powershell  7.0 or higher
-    if ($PSVersionTable.PSVersion.Major -ge 7)
-    {
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
         Write-Log -LogFile $logFile -Module $functionName -Message "PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request." -LogLevel "Debug"
         Write-Verbose "[$functionName] PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request."
         $restParams['StatusCodeVariable'] = 'statusCode'
@@ -525,28 +490,24 @@ function CallGraphAPI()
     Write-Log -LogFile $logFile -Module $functionName -Message "Method: $method." -LogLevel "Information"
     Write-Verbose "[$functionName] Method: $method"
     #endregion
-    try
-    {
+    try {
         $response = Invoke-RestMethod @restParams
         Write-Log -LogFile $logFile -Module $functionName -Message "NextLink: $($response.'@odata.nextLink')" -LogLevel "Information"
         Write-Verbose "[$functionName] NextLink: $($response.'@odata.nextLink')"
         Write-Log -LogFile $logFile -Module $functionName -Message "Response count: $($response.value.count)" -LogLevel "Information"
         Write-Verbose "[$functionName] Response count: $($response.value.count)"
-        if ($response.'@odata.nextLink')
-        {
+        if ($response.'@odata.nextLink') {
             Write-Log -LogFile $logFile -Module $functionName -Message "NextLink found. Fetching additional pages." -LogLevel "Verbose"
             Write-Verbose "[$functionName] NextLink found. Fetching additional pages."
             # Initialize an array to hold all items
             $allItems = @()
             $allItems += $response.value
             $nextLink = $response.'@odata.nextLink'
-            while ($nextLink)
-            {
+            while ($nextLink) {
                 $nextGroup = Invoke-RestMethod -Method $method -Uri $nextLink -Headers $defaultHeaders -UseBasicParsing
                 Write-Log -LogFile $logFile -Module $functionName -Message "Fetched next page with $($nextGroup.value.Count) items." -LogLevel "Information"
                 Write-Verbose "[$functionName] Fetched next page with $($nextGroup.value.Count) items."
-                if ($nextGroup.value)
-                {
+                if ($nextGroup.value) {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Adding items from next page to the collection." -LogLevel "Information"
                     Write-Verbose "[$functionName] Adding items from next page to the collection."
                     $allItems += $nextGroup.value
@@ -558,38 +519,32 @@ function CallGraphAPI()
             Write-Log -LogFile $logFile -Module $functionName -Message "All items collected. Total count: $($Response.value.Count)" -LogLevel "Information"
             Write-Verbose "[$functionName] All items collected. Total count: $($Response.value.Count)"
         }
-        else
-        {
+        else {
             Write-Log -LogFile $logFile -Module $functionName -Message "No nextLink found. Single page response received." -LogLevel "Verbose"
             Write-Verbose "[$functionName] No nextLink found. Single page response received."
         }
         Write-Log -LogFile $logFile -Module $functionName -Message "The call was successful." -LogLevel "Information"
         Write-Verbose "[$functionName] The call was successful."
-        if ($response.count)
-        {
+        if ($response.count) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Number of objects returned: $($response.count)." -LogLevel "Information"
         }
-        if ($response.value.Count)
-        {
+        if ($response.value.Count) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Number of items returned: $($response.value.Count)." -LogLevel "Information"
             Write-Verbose "[$functionName] Number of items returned: $($response.value.Count)."
         }
-        if ($PSVersionTable.PSVersion.Major -ge 7)
-        {
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Status code: $statusCode" -LogLevel "Information"
             Write-Log -LogFile $logFile -Module $functionName -Message "Status code message: $statusCodeMessage" -LogLevel "Information"
             Write-Verbose "[$functionName] Status code: $statusCode"
         }
     }
-    catch
-    {
+    catch {
         # Capture as much diagnostic information as possible about the failure
         Write-Log -LogFile $logFile -Module $functionName -Message "Exception type: $($PSItem.Exception.GetType().FullName)" -LogLevel "Error"
         Write-Log -LogFile $logFile -Module $functionName -Message "Exception message: $($PSItem.Exception.Message)" -LogLevel "Error"
         # Walk inner exceptions (if any)
         $inner = $PSItem.Exception.InnerException
-        while ($null -ne $inner)
-        {
+        while ($null -ne $inner) {
             Write-Log -LogFile $logFile -Module $functionName -Message "InnerException type: $($inner.GetType().FullName)" -LogLevel "Error"
             Write-Log -LogFile $logFile -Module $functionName -Message "InnerException message: $($inner.Message)" -LogLevel "Error"
             $inner = $inner.InnerException
@@ -599,23 +554,19 @@ function CallGraphAPI()
         $statusMessage = $PSItem.Exception.Message
         $statusCodeMessage = $null
         # Try to extract status code from exception when available
-        if ($null -eq $PSItem.Exception.statusCode)
-        {
+        if ($null -eq $PSItem.Exception.statusCode) {
             # Fallback: try to parse from exception message
             $statusCode = [regex]::Match($PSItem.Exception.Message, '\d+').Value
             Write-Log -LogFile $logFile -Module $functionName -Message "Status code (parsed): $statusCode" -LogLevel "Error"
             $statusCodeMessage = $PSItem.Exception | Out-String
             Write-Log -LogFile $logFile -Module $functionName -Message "Status code message: $statusCodeMessage" -LogLevel "Error"
         }
-        else
-        {
+        else {
             # PowerShell 5.1/7 HttpStatusCode
-            try
-            {
+            try {
                 $statusCode = $PSItem.Exception.statuscode.value__
             }
-            catch
-            {
+            catch {
                 $statusCode = [int]$PSItem.Exception.statuscode
             }
             $statusCodeMessage = $PSItem.Exception.statuscode
@@ -632,239 +583,184 @@ function CallGraphAPI()
         $diagHeader = $null
         $responseHeaders = @{}
         $resp = $PSItem.Exception.Response
-        if ($null -ne $resp)
-        {
+        if ($null -ne $resp) {
             # Status description when available
-            try
-            {
+            try {
                 $statusDescription = $resp.StatusDescription
             }
-            catch
-            {
+            catch {
                 $statusDescription = $null
             }
 
             # Headers (handle both WebHeaderCollection and IDictionary-like)
-            try
-            {
-                if ($resp.Headers -and $resp.Headers -is [System.Net.WebHeaderCollection])
-                {
-                    foreach ($key in $resp.Headers.AllKeys)
-                    {
+            try {
+                if ($resp.Headers -and $resp.Headers -is [System.Net.WebHeaderCollection]) {
+                    foreach ($key in $resp.Headers.AllKeys) {
                         $responseHeaders[$key] = $resp.Headers[$key]
                     }
                 }
-                elseif ($resp.Headers)
-                {
-                    foreach ($kvp in $resp.Headers.GetEnumerator())
-                    {
+                elseif ($resp.Headers) {
+                    foreach ($kvp in $resp.Headers.GetEnumerator()) {
                         $responseHeaders[$kvp.Key] = ($kvp.Value -join ',')
                     }
                 }
             }
-            catch
-            {
+            catch {
                 Write-Verbose "[$functionName] Failed to enumerate response headers: $($_.Exception.Message)"
                 & $logWarn "[$functionName] Failed to enumerate response headers: $($_.Exception.Message)"
             }
 
             # Common Graph headers
-            if ($responseHeaders.ContainsKey('request-id'))
-            {
+            if ($responseHeaders.ContainsKey('request-id')) {
                 $requestId = $responseHeaders['request-id']
             }
-            if ($responseHeaders.ContainsKey('client-request-id'))
-            {
+            if ($responseHeaders.ContainsKey('client-request-id')) {
                 $clientRequestId = $responseHeaders['client-request-id']
             }
-            if ($responseHeaders.ContainsKey('x-ms-ags-diagnostic'))
-            {
+            if ($responseHeaders.ContainsKey('x-ms-ags-diagnostic')) {
                 $diagHeader = $responseHeaders['x-ms-ags-diagnostic']
             }
-            if ($responseHeaders.ContainsKey('Date'))
-            {
+            if ($responseHeaders.ContainsKey('Date')) {
                 $serverDate = $responseHeaders['Date']
             }
-            if ($responseHeaders.ContainsKey('Retry-After'))
-            {
+            if ($responseHeaders.ContainsKey('Retry-After')) {
                 $retryAfter = $responseHeaders['Retry-After']
             }
             # Body: handle HttpWebResponse stream and PS7 ErrorDetails fallbacks
-            try
-            {
-                if ($resp -is [System.Net.HttpWebResponse])
-                {
+            try {
+                if ($resp -is [System.Net.HttpWebResponse]) {
                     $errorResponse = $resp.GetResponseStream()
-                    if ($errorResponse)
-                    {
+                    if ($errorResponse) {
                         $streamReader = New-Object System.IO.StreamReader($errorResponse)
                         $responseBodyRaw = $streamReader.ReadToEnd()
                         $streamReader.Close()
                     }
                 }
             }
-            catch
-            {
+            catch {
                 Write-Log -LogFile $logFile -Module $functionName -Message "Failed to read response stream: $($_.Exception.Message)" -LogLevel "Warning"
             }
         }
         # Additional fallbacks commonly present in PS7
-        if (-not $responseBodyRaw)
-        {
-            try
-            {
-                if ($PSItem.ErrorDetails -and $PSItem.ErrorDetails.Message)
-                {
+        if (-not $responseBodyRaw) {
+            try {
+                if ($PSItem.ErrorDetails -and $PSItem.ErrorDetails.Message) {
                     $responseBodyRaw = $PSItem.ErrorDetails.Message
                 }
             }
-            catch
-            {
+            catch {
                 Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve ErrorDetails: $($_.Exception.Message)" -LogLevel "Warning"
             }
         }
-        if (-not $responseBodyRaw)
-        {
-            try
-            {
-                if ($PSItem.Exception.Response -and $PSItem.Exception.Response.Content)
-                {
+        if (-not $responseBodyRaw) {
+            try {
+                if ($PSItem.Exception.Response -and $PSItem.Exception.Response.Content) {
                     $responseBodyRaw = [string]$PSItem.Exception.Response.Content
                 }
             }
-            catch
-            {
+            catch {
                 Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve response content: $($_.Exception.Message)" -LogLevel "Warning"
             }
         }
 
         # Parse JSON body if it looks like JSON
-        if ($responseBodyRaw)
-        {
+        if ($responseBodyRaw) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Raw server response captured (truncated for display if large)." -LogLevel "Information"
             Write-Log -LogFile $logFile -Module $functionName -Message "Server Response (raw): $responseBodyRaw" -LogLevel "Error"
-            try
-            {
+            try {
                 $responseJson = $responseBodyRaw | ConvertFrom-Json -ErrorAction Stop
             }
-            catch
-            {
+            catch {
                 $responseJson = $null
             }
         }
         # Extract Graph error fields when available
-        if ($null -ne $responseJson -and $responseJson.error)
-        {
+        if ($null -ne $responseJson -and $responseJson.error) {
             $graphError = $responseJson.error
             $graphCode = $graphError.code
             $graphMessage = $graphError.message
             Write-Log -LogFile $logFile -Module $functionName -Message "Graph error code: $graphCode" -LogLevel "Information"
             Write-Log -LogFile $logFile -Module $functionName -Message "Graph error message: $graphMessage" -LogLevel "Information"
-            if ($graphError.innerError)
-            {
+            if ($graphError.innerError) {
                 $innerErr = $graphError.innerError
                 # Newer Graph may use camelCase innerError fields; older uses innererror
-                try
-                {
-                    if (-not $requestId -and $innerErr.'request-id')
-                    {
+                try {
+                    if (-not $requestId -and $innerErr.'request-id') {
                         $requestId = $innerErr.'request-id'
                     }
                 }
-                catch
-                {
+                catch {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error request-id: $($_.Exception.Message)" -LogLevel "Warning"
                 }
-                try
-                {
-                    if (-not $clientRequestId -and $innerErr.'client-request-id')
-                    {
+                try {
+                    if (-not $clientRequestId -and $innerErr.'client-request-id') {
                         $clientRequestId = $innerErr.'client-request-id'
                     }
                 }
-                catch
-                {
+                catch {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error client-request-id: $($_.Exception.Message)" -LogLevel "Warning"
                 }
-                try
-                {
-                    if (-not $serverDate -and $innerErr.date)
-                    {
+                try {
+                    if (-not $serverDate -and $innerErr.date) {
                         $serverDate = $innerErr.date
                     }
                 }
-                catch
-                {
+                catch {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error date: $($_.Exception.Message)" -LogLevel "Warning"
                 }
                 Write-Log -LogFile $logFile -Module $functionName -Message "Graph innerError: request-id=$requestId client-request-id=$clientRequestId date=$serverDate" -LogLevel "Information"
                 # Some APIs include nested innererror with additional code/message
-                if ($innerErr.innererror)
-                {
+                if ($innerErr.innererror) {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Graph nested innererror: $($innerErr.innererror | ConvertTo-Json -Depth 5)" -LogLevel "Information"
                 }
             }
         }
 
         # Summarize headers and identifiers (avoid logging Authorization)
-        if ($responseHeaders.Count -gt 0)
-        {
+        if ($responseHeaders.Count -gt 0) {
             Write-Verbose "[$functionName] Response headers:"
-            foreach ($k in $responseHeaders.Keys | Sort-Object)
-            {
-                if ($k -ne 'Authorization')
-                {
+            foreach ($k in $responseHeaders.Keys | Sort-Object) {
+                if ($k -ne 'Authorization') {
                     Write-Verbose "[$functionName]   $($k): $($responseHeaders[$k])"
                     Write-Log -LogFile $logFile -Module $functionName -Message "Response header: $($k): $($responseHeaders[$k])" -LogLevel "Information"
                 }
             }
         }
-        if ($requestId)
-        {
+        if ($requestId) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Request-Id: $requestId" -LogLevel "Information"
         }
-        if ($clientRequestId)
-        {
+        if ($clientRequestId) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Client-Request-Id: $clientRequestId" -LogLevel "Information"
         }
-        if ($diagHeader)
-        {
+        if ($diagHeader) {
             Write-Log -LogFile $logFile -Module $functionName -Message "x-ms-ags-diagnostic: $diagHeader" -LogLevel "Information"
         }
-        if ($serverDate)
-        {
+        if ($serverDate) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Server Date: $serverDate" -LogLevel "Information"
         }
-        if ($retryAfter)
-        {
+        if ($retryAfter) {
             Write-Log -LogFile $logFile -Module $functionName -Message "Retry-After: $retryAfter" -LogLevel "Information"
         }
         # Persist diagnostics to disk via Write-Log (if available)
-        try
-        {
+        try {
             # Build a consolidated diagnostic message
             $headersText = ''
-            if ($responseHeaders.Count -gt 0)
-            {
+            if ($responseHeaders.Count -gt 0) {
                 $headersText = ($responseHeaders.GetEnumerator() | Where-Object { $_.Key -ne 'Authorization' } | Sort-Object Key | ForEach-Object { "${($_.Key)}: ${($_.Value)}" }) -join [Environment]::NewLine
             }
             $graphInnerDump = $null
-            if ($responseJson -and $responseJson.error -and $responseJson.error.innerError)
-            {
-                try
-                {
+            if ($responseJson -and $responseJson.error -and $responseJson.error.innerError) {
+                try {
                     $graphInnerDump = ($responseJson.error.innerError | ConvertTo-Json -Depth 8)
                 }
-                catch
-                {
+                catch {
                     $graphInnerDump = ($responseJson.error.innerError | Out-String)
                 }
             }
             $rawBodyForLog = $responseBodyRaw
             # Optionally truncate extremely large bodies to keep logs manageable
             $maxBody = 50000
-            if ($rawBodyForLog -and $rawBodyForLog.Length -gt $maxBody)
-            {
+            if ($rawBodyForLog -and $rawBodyForLog.Length -gt $maxBody) {
                 $rawBodyForLog = $rawBodyForLog.Substring(0, $maxBody) + "... (truncated; total length=$($responseBodyRaw.Length))"
             }
             $logMessage = @"
@@ -894,65 +790,52 @@ $rawBodyForLog
             # Fallback verbose logging to ensure we don't lose diagnostics
             Write-Verbose "[$functionName] (fallback) $logMessage"
         }
-        catch
-        {
+        catch {
             Write-Verbose "[$functionName] Failed to write diagnostics via Write-Log: $($_.Exception.Message)"
             Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
         }
 
         # Preserve existing switch logic for user-friendly messages
         $statusMessage = $statusMessage
-        switch ($statusCode)
-        {
-            400
-            {
+        switch ($statusCode) {
+            400 {
                 Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Bad request. Please check the resource name."
             }
-            401
-            {
+            401 {
                 Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Unauthorized. Please check your access token."
             }
-            403
-            {
+            403 {
                 Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Forbidden. You do not have permission to access this resource."
             }
-            404
-            {
+            404 {
                 Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Not found. The resource does not exist."
             }
-            default
-            {
+            default {
                 Write-Verbose "[$functionName] An unknown error occurred. Please check the error message below."
                 Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Error: $statusMessage"
                 Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                if ($statusCode)
-                {
+                if ($statusCode) {
                     Write-Log -Message "The status code is $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 }
-                if ($statusDescription)
-                {
+                if ($statusDescription) {
                     Write-Log -Message "Status description: $statusDescription" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 }
-                if ($statusCodeMessage)
-                {
+                if ($statusCodeMessage) {
                     Write-Log -Message "$statusCode indicates $statusCodeMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 }
                 Write-Log -Message "Status message: $statusMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                if ($requestId)
-                {
+                if ($requestId) {
                     Write-Log -Message "Request-Id: $requestId" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 }
-                if ($clientRequestId)
-                {
+                if ($clientRequestId) {
                     Write-Log -Message "Client-Request-Id: $clientRequestId" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 }
-                if ($retryAfter)
-                {
+                if ($retryAfter) {
                     Write-Log -Message "Retry-After: $retryAfter" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 }
                 Write-Verbose "[$functionName] The full error message follows below:"
@@ -963,12 +846,10 @@ $rawBodyForLog
         }
         Write-Log -Message "Failed to call the Graph API: $_" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
         Write-Log -Message "The status code is $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        if ($statusCodeMessage)
-        {
+        if ($statusCodeMessage) {
             Write-Log -Message "$statusCode indicates $statusCodeMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
         }
-        if ($statusDescription)
-        {
+        if ($statusDescription) {
             Write-Log -Message "Status description: $statusDescription" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
         }
         Write-Log -Message "Status message: $statusMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
@@ -977,8 +858,7 @@ $rawBodyForLog
         Write-Log -Message "Error: $($_)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
         Write-Log -Message "Exception message: $($PSItem.Exception.Message)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
         Write-Log -Message "Exception response: $($PSItem.Exception.Response)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        if ($responseBodyRaw)
-        {
+        if ($responseBodyRaw) {
             Write-Log -Message "Server Response (raw): $responseBodyRaw" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
         }
         return $statusCode
