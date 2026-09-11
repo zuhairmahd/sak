@@ -27,6 +27,8 @@ function Get-GraphAccessToken {
         [string]$CacheType = 'Memory',
         [string]$APIVersion = 'Beta'
     )
+
+    $functionName = $MyInvocation.MyCommand.Name
     $maxJSONDepth = 10
     #region helper functions
     function FormatScopes {
@@ -503,7 +505,7 @@ function Get-GraphAccessToken {
                     Write-Log -LogFile $LogFile -Module "$functionName" -Message "Checking memory cache for access token" -LogLevel "Verbose"
                     # Initialize memory cache if it doesn't exist
                     if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue)) {
-                        Write-Verbose "[$functionName] Initializing memory cache"
+                        Write-Verbose "No memory cache found, initializing new memory cache"
                         Write-Log -LogFile $LogFile -Module "$functionName" -Message "Initializing memory cache" -LogLevel "Verbose"
                         New-Variable -Name 'MemoryCache' -Scope Global -Value @{} -Force
                     }
@@ -1096,12 +1098,14 @@ function Get-GraphAccessToken {
                 return $null
             }
             Write-Log -LogFile $LogFile -Module "$functionName" -Message "Refresh token is valid. Proceeding to get new access token." -LogLevel "Information"
+            Write-Host "Refresh token is valid. Proceeding to get new access token..." -ForegroundColor Green
             $cachedToken = Get-TokenFromResponse -tokenResponse $tokenResponse -domain $domain -refreshToken $tokenResponse.refresh_token
             # Cache the access token based on cache type
             Save-TokenToCache -cachedToken $cachedToken -cacheType $cacheType -cacheTokenFile $cacheTokenFile -cacheFolder $cacheFolder
             # Only save the refresh token if it's different from the one we already have
             Write-Log -LogFile $LogFile -Module "$functionName" -Message "Checking whether to save the refresh token..." -LogLevel "Verbose"
             if ($tokenResponse.refresh_token -and $tokenResponse.refresh_token -ne $accessTokenObject.refresh_token) {
+                Write-Host "New refresh token detected. Updating configuration..." -ForegroundColor Green
                 Write-Log -LogFile $LogFile -Module "$functionName" -Message "Saving new refresh token as it differs from the existing one." -LogLevel "Verbose"
                 Save-RefreshTokenToConfig -refreshToken $tokenResponse -configFilePath $configFilePath
             }
@@ -1249,9 +1253,10 @@ function Get-GraphAccessToken {
 
         # First check if we have a valid refresh token in config
         if ($configRefreshToken) {
-            Write-Verbose "[$functionName] Found refresh token in config. Testing its validity before requesting new authorization..."
+            Write-Host "Found refresh token in config. Testing its validity before requesting new authorization..."
             Write-Log -LogFile $LogFile -Module $functionName -Message "Found refresh token in config. Testing its validity before requesting new authorization..."
             $isValid, $tokenResponse = Test-RefreshTokenValidity -refreshToken $configRefreshToken -clientId $clientId -clientSecret $clientSecret -tenantId $tenantId -scopes $scopes -domain $domain -AuthType $AuthType
+            Write-Verbose "[$functionName] Tested refresh token validity. Result: $isValid"
             if ($isValid) {
                 Write-Host "Existing refresh token is valid. Using it without requesting a new authorization."
                 Write-Log -LogFile $LogFile -Module $functionName -Message "Existing refresh token is valid. Using it without requesting a new authorization."
@@ -1264,7 +1269,7 @@ function Get-GraphAccessToken {
                 return Format-TokenOutput -token $tokenResponse.access_token -secureString $SecureString
             }
             else {
-                Write-Verbose "[$functionName] Existing refresh token is invalid. Will proceed with new authorization."
+                Write-Host "Existing refresh token is invalid. You will need to authenticate again." -ForegroundColor Yellow
                 Write-Log -LogFile $LogFile -Module $functionName -Message "Existing refresh token is invalid. Will proceed with new authorization."
                 if ($ForcedRenewal) {
                     Write-Host "Forcing new refresh token - proceeding with new authentication flow." -ForegroundColor Yellow
@@ -1568,7 +1573,7 @@ function Get-GraphAccessToken {
             Write-Verbose "[$functionName] Automatic flow was not successful or auth is set to private, falling back to manual code input"
             # Step 1: Open the authorization URL
             $authUrl = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/authorize?client_id=$clientId&response_type=code&redirect_uri=$encodedRedirectUri&response_mode=query&scope=$encodedScopes&state=$state"
-            Write-Verbose "[$functionName] Authorization URL: $authUrl"
+            Write-Host "Please open the following URL in your browser to authenticate:`n$authUrl"
             Write-Log -LogFile $LogFile -Module $functionName -Message "Authorization URL: $authUrl"
             Write-Host "Opening browser for user authentication and consent..."
             if (-not (LaunchBrowser -url $authUrl -browser $preferredBrowser)) {
@@ -2059,7 +2064,6 @@ function Get-GraphAccessToken {
     }
     #endregion helper functions
 
-    $functionName = $MyInvocation.MyCommand.Name
     #region Process config files
     Write-Log -LogFile $LogFile -Module $functionName -Message "Starting Graph access token retrieval" -LogLevel "Verbose"
     # Read and process configuration file
@@ -2070,12 +2074,12 @@ function Get-GraphAccessToken {
     }
 
     $config = Get-Content -Path $configFile -Raw | ConvertFrom-Json
-    $configRefreshToken = $null
 
     # Read the refresh token if it exists
+    $configRefreshToken = $config.delegatedCredentials.refresh_token
     if ($configRefreshToken) {
-        Write-Verbose "[$functionName] Found refresh token in encrypted config."
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Found refresh token in encrypted config" -LogLevel "Verbose"
+        Write-Verbose "[$functionName] Found refresh token in config."
+        Write-Log -LogFile $LogFile -Module $functionName -Message "Found refresh token in config" -LogLevel "Verbose"
     }
     else {
         Write-Verbose "[$functionName] No refresh token found in config."
