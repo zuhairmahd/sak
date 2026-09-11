@@ -26,9 +26,9 @@ param(
     [string]$APIVersion
 )
 
-. (Join-Path $PSScriptRoot "get-GraphAccessToken.ps1")
-. (Join-Path $PSScriptRoot "Write-Log.ps1")
-. (Join-Path $PSScriptRoot "Invoke-GraphAPI.ps1")
+. (Join-Path $PSScriptRoot "functions\get-GraphAccessToken.ps1")
+. (Join-Path $PSScriptRoot "functions\Write-Log.ps1")
+. (Join-Path $PSScriptRoot "functions\Invoke-GraphAPI.ps1")
 
 $script:logFile = Join-Path $PSScriptRoot "test.log"
 $params = @{
@@ -51,5 +51,10 @@ if ($APIVersion) { $params.APIVersion = $APIVersion }
 
 $accessToken = Get-GraphAccessToken @params
 $uri = "users"
-$global:users = Invoke-GraphAPI -accessToken $accessToken -ResourcePath $uri -method "GET"
+if ($accessToken) {
+    $global:users = Invoke-GraphAPI -accessToken $accessToken -ResourcePath $uri -method "GET"
+}
+else {
+    Write-Host "Failed to acquire access token."
+}
 
