@@ -1,0 +1,73 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+.mcp.json
+.secrets/
+release/
+test/
+build/
+TestReports/
+TestResults/
+.claude/
+memory/
+
+# Prevent accidental GUID-named folders (created by cache operations)
+[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+
+# PowerShell-specific files
+
+# PowerShell script logs
+*.log
+
+# PowerShell cache files
+*.cache
+
+# PowerShell compiled files
+*.ps1xml
+
+# Temporary files created during script execution
+*.tmp
+*.bak
+
+# Module build artifacts
+*.nupkg
+*.snupkg
+
+# Misc. files.
+*.csv
+*.xls
+*.xlsx
+*.htm
+*.html
+*.xml
+*.backup.*
+menu-cache.json
+config.json
+*.zuh
+*temp*
+temp*
+*temp
+*.zuh
+*.com.json
+*.gov.json
+*.org.json
+*.net.json
+gemini.md
+.gemini/
+gha-creds-*.json
+arabictutor.com.psd1
+gao.gov.psd1
+*.txt
+*.zip
+targets-gao.psd1
+.psd1
+
+# Exception: Allow temp-named files in functions directory
+!functions/**/*temp*
