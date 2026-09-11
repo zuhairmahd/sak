@@ -50,7 +50,7 @@ if ($APIVersion) { $params.APIVersion = $APIVersion }
 
 
 $accessToken = Get-GraphAccessToken @params
-$uri = "users"
+$uri = "users/me"
 if ($accessToken) {
     $global:users = Invoke-GraphAPI -accessToken $accessToken -ResourcePath $uri -method "GET"
 }

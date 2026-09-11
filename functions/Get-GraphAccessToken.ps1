@@ -2159,7 +2159,7 @@ function Get-GraphAccessToken {
         Write-Verbose "[$functionName] Delegated access selected. Checking for scope."
         if ($null -eq $scope) {
             Write-Verbose "[$functionName] No scope provided in parameters. Checking config file for scope."
-            $Scope = $config.Scope
+            $Scope = $config.auth.Scope
             Write-Host "Scope: $Scope"
             if ($Scope) {
                 Write-Verbose "[$functionName] Found scope in config file."
