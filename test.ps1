@@ -175,7 +175,7 @@ else {
 $scriptName = $MyInvocation.MyCommand.Name
 $logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $keywords = if ($keyword) { @($keyword) } else { @("Python") }
-$userName = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName
+$userName = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName -split '\\' | Select-Object -Last 1
 $sid = (New-Object System.Security.Principal.NTAccount($userName)).Translate([System.Security.Principal.SecurityIdentifier]).Value
 $exitCode = 0
 #endregion define variables
