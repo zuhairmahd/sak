@@ -1161,7 +1161,7 @@ function Get-GraphAccessToken {
             'Chrome' {
                 Write-Verbose "[$functionName] Opening Chrome browser for authentication"
                 if ($privateSession) {
-                    Write-Verbose "[$functionName] Private session detected.  Opening $preferredBrowser in private mode"
+                    Write-Verbose "[$functionName] Private session detected.  Opening $browser in private mode"
                     $urlParams = @{
                         FilePath     = "C:\Program Files\Google\Chrome\Application\chrome.exe"
                         ArgumentList = "--incognito", $url
@@ -2191,6 +2191,8 @@ function Get-GraphAccessToken {
     Write-Verbose "[$functionName] Cache Type: $CacheType"
     Write-Verbose "[$functionName] Domain: $domain"
     Write-Verbose "[$functionName] delegated: $delegated"
+    Write-Verbose "[$functionName] Preferred Browser: $preferredBrowser"
+    Write-Verbose "[$functionName] Private Session: $privateSession"
     Write-Verbose "[$functionName] Scopes: $Scope"
     Write-Verbose "[$functionName] Config has refresh token: $($null -ne $configRefreshToken)"
     #endregion Log parameters
