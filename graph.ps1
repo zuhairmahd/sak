@@ -54,7 +54,6 @@ if ($null -ne $auth) {
 #endregion define configuration parameters
 
 $accessToken = Get-GraphAccessToken @params
-$user = "mahmoudz@gao.gov"
 $uri = "users/$user/registeredDevices"
 $consistencyLevel = $true
 
