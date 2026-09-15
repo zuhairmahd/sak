@@ -112,6 +112,16 @@ function Invoke-GraphAPI {
     Write-Log -LogFile $logFile -Module $functionName -Message "Consistency Level: $consistencyLevel" -LogLevel "Information"
     Write-Log -LogFile $logFile -Module $functionName -Message "Body: $body" -LogLevel "Information"
     Write-Log -LogFile $logFile -Module $functionName -Message "SecureString: $secureString" -LogLevel "Information"
+    #write-verbose all the above.
+    Write-Verbose "[$functionName] Resource Path: $ResourcePath"
+    Write-Verbose "[$functionName] Method: $method"
+    Write-Verbose "[$functionName] Filter: $filter"
+    Write-Verbose "[$functionName] Search: $Search"
+    Write-Verbose "[$functionName] Extra Parameters: $ExtraParameters"
+    Write-Verbose "[$functionName] API Version: $APIVersion"
+    Write-Verbose "[$functionName] Consistency Level: $consistencyLevel"
+    Write-Verbose "[$functionName] Body: $body"
+    Write-Verbose "[$functionName] SecureString: $secureString"
 
     # Check if ResourcePath is an array
     $isArrayInput = $ResourcePath -is [array]
@@ -237,8 +247,7 @@ function Invoke-GraphAPI {
                     $result = CallGraphAPI -accessToken $accessToken -ResourcePath $path -APIVersion $APIVersion `
                         -method $method -Filter $Filter -Search $Search -ExtraParameters $ExtraParameters `
                         -body $body -consistencyLevel:$consistencyLevel -secureString:$secureString
-                    # Check if result is an error status code (integer) or null
-                    if ($null -eq $result -or $result -is [int]) {
+                    if ($null -eq $result -or $result.error -ne $null) {
                         $failureCount++
                         Write-Log -LogFile $logFile -Module $functionName -Message "Failed to process resource: $path (Status: $result)" -LogLevel "Warning"
                     }
@@ -477,12 +486,6 @@ function Invoke-GraphAPI {
         Write-Verbose "[$functionName] Body parameter provided. Adding to the request."
         $restParams['Body'] = $body
     }
-    #Add statusCodeVariable if we are running under powershell  7.0 or higher
-    if ($PSVersionTable.PSVersion.Major -ge 7) {
-        Write-Log -LogFile $logFile -Module $functionName -Message "PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request." -LogLevel "Debug"
-        Write-Verbose "[$functionName] PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request."
-        $restParams['StatusCodeVariable'] = 'statusCode'
-    }
     Write-Log -LogFile $logFile -Module $functionName -Message "Making the following call to Microsoft Graph:" -LogLevel "Information"
     Write-Verbose "[$functionName] Making the following call to Microsoft Graph:"
     Write-Log -LogFile $logFile -Module $functionName -Message "URI: $encodedUri." -LogLevel "Information"
@@ -525,344 +528,46 @@ function Invoke-GraphAPI {
         }
         Write-Log -LogFile $logFile -Module $functionName -Message "The call was successful." -LogLevel "Information"
         Write-Verbose "[$functionName] The call was successful."
-        if ($response.count) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Number of objects returned: $($response.count)." -LogLevel "Information"
-        }
-        if ($response.value.Count) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Number of items returned: $($response.value.Count)." -LogLevel "Information"
-            Write-Verbose "[$functionName] Number of items returned: $($response.value.Count)."
-        }
-        if ($PSVersionTable.PSVersion.Major -ge 7) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code: $statusCode" -LogLevel "Information"
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code message: $statusCodeMessage" -LogLevel "Information"
-            Write-Verbose "[$functionName] Status code: $statusCode"
-        }
+        #Add a status code
+        $statusCode = if ($response -and $response.statusCode) { $response.statusCode } else { 200 }
+        $response | Add-Member -NotePropertyName 'statusCode' -NotePropertyValue $statusCode -Force -ErrorAction SilentlyContinue
     }
     catch {
-        # Capture as much diagnostic information as possible about the failure
-        Write-Log -LogFile $logFile -Module $functionName -Message "Exception type: $($PSItem.Exception.GetType().FullName)" -LogLevel "Error"
-        Write-Log -LogFile $logFile -Module $functionName -Message "Exception message: $($PSItem.Exception.Message)" -LogLevel "Error"
-        # Walk inner exceptions (if any)
-        $inner = $PSItem.Exception.InnerException
-        while ($null -ne $inner) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "InnerException type: $($inner.GetType().FullName)" -LogLevel "Error"
-            Write-Log -LogFile $logFile -Module $functionName -Message "InnerException message: $($inner.Message)" -LogLevel "Error"
-            $inner = $inner.InnerException
-        }
-        # Defaults
-        $statusDescription = $null
-        $statusMessage = $PSItem.Exception.Message
-        $statusCodeMessage = $null
-        # Try to extract status code from exception when available
+        Write-Log -LogFile $logFile -Module $functionName -Message "Graph API call failed: $($PSItem.Exception.Message)" -LogLevel "Error"
+
+        # Extract HTTP status code (PS5.1: .statuscode enum; PS7: same; non-HTTP: parse from message)
         if ($null -eq $PSItem.Exception.statusCode) {
-            # Fallback: try to parse from exception message
             $statusCode = [regex]::Match($PSItem.Exception.Message, '\d+').Value
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code (parsed): $statusCode" -LogLevel "Error"
-            $statusCodeMessage = $PSItem.Exception | Out-String
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code message: $statusCodeMessage" -LogLevel "Error"
         }
         else {
-            # PowerShell 5.1/7 HttpStatusCode
-            try {
-                $statusCode = $PSItem.Exception.statuscode.value__
-            }
-            catch {
-                $statusCode = [int]$PSItem.Exception.statuscode
-            }
-            $statusCodeMessage = $PSItem.Exception.statuscode
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code (from exception): $statusCode" -LogLevel "Error"
+            try { $statusCode = $PSItem.Exception.statuscode.value__ }
+            catch { $statusCode = [int]$PSItem.Exception.statuscode }
         }
 
-        # Attempt to extract response details (headers/body) across PS versions
+        # Extract response body (PS5.1: response stream; PS7: ErrorDetails.Message)
         $responseBodyRaw = $null
-        $responseJson = $null
-        $requestId = $null
-        $clientRequestId = $null
-        $serverDate = $null
-        $retryAfter = $null
-        $diagHeader = $null
-        $responseHeaders = @{}
         $resp = $PSItem.Exception.Response
-        if ($null -ne $resp) {
-            # Status description when available
+        if ($null -ne $resp -and $resp -is [System.Net.HttpWebResponse]) {
             try {
-                $statusDescription = $resp.StatusDescription
-            }
-            catch {
-                $statusDescription = $null
-            }
-
-            # Headers (handle both WebHeaderCollection and IDictionary-like)
-            try {
-                if ($resp.Headers -and $resp.Headers -is [System.Net.WebHeaderCollection]) {
-                    foreach ($key in $resp.Headers.AllKeys) {
-                        $responseHeaders[$key] = $resp.Headers[$key]
-                    }
-                }
-                elseif ($resp.Headers) {
-                    foreach ($kvp in $resp.Headers.GetEnumerator()) {
-                        $responseHeaders[$kvp.Key] = ($kvp.Value -join ',')
-                    }
+                $stream = $resp.GetResponseStream()
+                if ($stream) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $responseBodyRaw = $reader.ReadToEnd()
+                    $reader.Close()
                 }
             }
-            catch {
-                Write-Verbose "[$functionName] Failed to enumerate response headers: $($_.Exception.Message)"
-                & $logWarn "[$functionName] Failed to enumerate response headers: $($_.Exception.Message)"
-            }
-
-            # Common Graph headers
-            if ($responseHeaders.ContainsKey('request-id')) {
-                $requestId = $responseHeaders['request-id']
-            }
-            if ($responseHeaders.ContainsKey('client-request-id')) {
-                $clientRequestId = $responseHeaders['client-request-id']
-            }
-            if ($responseHeaders.ContainsKey('x-ms-ags-diagnostic')) {
-                $diagHeader = $responseHeaders['x-ms-ags-diagnostic']
-            }
-            if ($responseHeaders.ContainsKey('Date')) {
-                $serverDate = $responseHeaders['Date']
-            }
-            if ($responseHeaders.ContainsKey('Retry-After')) {
-                $retryAfter = $responseHeaders['Retry-After']
-            }
-            # Body: handle HttpWebResponse stream and PS7 ErrorDetails fallbacks
-            try {
-                if ($resp -is [System.Net.HttpWebResponse]) {
-                    $errorResponse = $resp.GetResponseStream()
-                    if ($errorResponse) {
-                        $streamReader = New-Object System.IO.StreamReader($errorResponse)
-                        $responseBodyRaw = $streamReader.ReadToEnd()
-                        $streamReader.Close()
-                    }
-                }
-            }
-            catch {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Failed to read response stream: $($_.Exception.Message)" -LogLevel "Warning"
-            }
+            catch {}
         }
-        # Additional fallbacks commonly present in PS7
-        if (-not $responseBodyRaw) {
-            try {
-                if ($PSItem.ErrorDetails -and $PSItem.ErrorDetails.Message) {
-                    $responseBodyRaw = $PSItem.ErrorDetails.Message
-                }
-            }
-            catch {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve ErrorDetails: $($_.Exception.Message)" -LogLevel "Warning"
-            }
-        }
-        if (-not $responseBodyRaw) {
-            try {
-                if ($PSItem.Exception.Response -and $PSItem.Exception.Response.Content) {
-                    $responseBodyRaw = [string]$PSItem.Exception.Response.Content
-                }
-            }
-            catch {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve response content: $($_.Exception.Message)" -LogLevel "Warning"
-            }
+        if (-not $responseBodyRaw -and $PSItem.ErrorDetails) {
+            $responseBodyRaw = $PSItem.ErrorDetails.Message
         }
 
-        # Parse JSON body if it looks like JSON
-        if ($responseBodyRaw) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Raw server response captured (truncated for display if large)." -LogLevel "Information"
-            Write-Log -LogFile $logFile -Module $functionName -Message "Server Response (raw): $responseBodyRaw" -LogLevel "Error"
-            try {
-                $responseJson = $responseBodyRaw | ConvertFrom-Json -ErrorAction Stop
-            }
-            catch {
-                $responseJson = $null
-            }
+        $response = $responseBodyRaw | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if (-not $response) {
+            $response = [PSCustomObject]@{ error = [PSCustomObject]@{ message = $PSItem.Exception.Message } }
         }
-        # Extract Graph error fields when available
-        if ($null -ne $responseJson -and $responseJson.error) {
-            $graphError = $responseJson.error
-            $graphCode = $graphError.code
-            $graphMessage = $graphError.message
-            Write-Log -LogFile $logFile -Module $functionName -Message "Graph error code: $graphCode" -LogLevel "Information"
-            Write-Log -LogFile $logFile -Module $functionName -Message "Graph error message: $graphMessage" -LogLevel "Information"
-            if ($graphError.innerError) {
-                $innerErr = $graphError.innerError
-                # Newer Graph may use camelCase innerError fields; older uses innererror
-                try {
-                    if (-not $requestId -and $innerErr.'request-id') {
-                        $requestId = $innerErr.'request-id'
-                    }
-                }
-                catch {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error request-id: $($_.Exception.Message)" -LogLevel "Warning"
-                }
-                try {
-                    if (-not $clientRequestId -and $innerErr.'client-request-id') {
-                        $clientRequestId = $innerErr.'client-request-id'
-                    }
-                }
-                catch {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error client-request-id: $($_.Exception.Message)" -LogLevel "Warning"
-                }
-                try {
-                    if (-not $serverDate -and $innerErr.date) {
-                        $serverDate = $innerErr.date
-                    }
-                }
-                catch {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error date: $($_.Exception.Message)" -LogLevel "Warning"
-                }
-                Write-Log -LogFile $logFile -Module $functionName -Message "Graph innerError: request-id=$requestId client-request-id=$clientRequestId date=$serverDate" -LogLevel "Information"
-                # Some APIs include nested innererror with additional code/message
-                if ($innerErr.innererror) {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Graph nested innererror: $($innerErr.innererror | ConvertTo-Json -Depth 5)" -LogLevel "Information"
-                }
-            }
-        }
-
-        # Summarize headers and identifiers (avoid logging Authorization)
-        if ($responseHeaders.Count -gt 0) {
-            Write-Verbose "[$functionName] Response headers:"
-            foreach ($k in $responseHeaders.Keys | Sort-Object) {
-                if ($k -ne 'Authorization') {
-                    Write-Verbose "[$functionName]   $($k): $($responseHeaders[$k])"
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Response header: $($k): $($responseHeaders[$k])" -LogLevel "Information"
-                }
-            }
-        }
-        if ($requestId) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Request-Id: $requestId" -LogLevel "Information"
-        }
-        if ($clientRequestId) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Client-Request-Id: $clientRequestId" -LogLevel "Information"
-        }
-        if ($diagHeader) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "x-ms-ags-diagnostic: $diagHeader" -LogLevel "Information"
-        }
-        if ($serverDate) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Server Date: $serverDate" -LogLevel "Information"
-        }
-        if ($retryAfter) {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Retry-After: $retryAfter" -LogLevel "Information"
-        }
-        # Persist diagnostics to disk via Write-Log (if available)
-        try {
-            # Build a consolidated diagnostic message
-            $headersText = ''
-            if ($responseHeaders.Count -gt 0) {
-                $headersText = ($responseHeaders.GetEnumerator() | Where-Object { $_.Key -ne 'Authorization' } | Sort-Object Key | ForEach-Object { "${($_.Key)}: ${($_.Value)}" }) -join [Environment]::NewLine
-            }
-            $graphInnerDump = $null
-            if ($responseJson -and $responseJson.error -and $responseJson.error.innerError) {
-                try {
-                    $graphInnerDump = ($responseJson.error.innerError | ConvertTo-Json -Depth 8)
-                }
-                catch {
-                    $graphInnerDump = ($responseJson.error.innerError | Out-String)
-                }
-            }
-            $rawBodyForLog = $responseBodyRaw
-            # Optionally truncate extremely large bodies to keep logs manageable
-            $maxBody = 50000
-            if ($rawBodyForLog -and $rawBodyForLog.Length -gt $maxBody) {
-                $rawBodyForLog = $rawBodyForLog.Substring(0, $maxBody) + "... (truncated; total length=$($responseBodyRaw.Length))"
-            }
-            $logMessage = @"
-[$functionName] Graph API call failed.
-ExceptionType: $($PSItem.Exception.GetType().FullName)
-ExceptionMessage: $($PSItem.Exception.Message)
-StatusCode: $statusCode
-StatusDescription: $statusDescription
-StatusCodeMessage: $statusCodeMessage
-Request-Id: $requestId
-Client-Request-Id: $clientRequestId
-ServerDate: $serverDate
-Retry-After: $retryAfter
-Headers:
-$headersText
-
-GraphErrorCode: $graphCode
-GraphErrorMessage: $graphMessage
-GraphInnerError:
-$graphInnerDump
-
-ResponseBody:
-$rawBodyForLog
-"@
-
-            Write-Log -Message $logMessage -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-            # Fallback verbose logging to ensure we don't lose diagnostics
-            Write-Verbose "[$functionName] (fallback) $logMessage"
-        }
-        catch {
-            Write-Verbose "[$functionName] Failed to write diagnostics via Write-Log: $($_.Exception.Message)"
-            Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        }
-
-        # Preserve existing switch logic for user-friendly messages
-        $statusMessage = $statusMessage
-        switch ($statusCode) {
-            400 {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                Write-Verbose "[$functionName] Bad request. Please check the resource name."
-            }
-            401 {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                Write-Verbose "[$functionName] Unauthorized. Please check your access token."
-            }
-            403 {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                Write-Verbose "[$functionName] Forbidden. You do not have permission to access this resource."
-            }
-            404 {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                Write-Verbose "[$functionName] Not found. The resource does not exist."
-            }
-            default {
-                Write-Verbose "[$functionName] An unknown error occurred. Please check the error message below."
-                Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                Write-Verbose "[$functionName] Error: $statusMessage"
-                Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                if ($statusCode) {
-                    Write-Log -Message "The status code is $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                }
-                if ($statusDescription) {
-                    Write-Log -Message "Status description: $statusDescription" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                }
-                if ($statusCodeMessage) {
-                    Write-Log -Message "$statusCode indicates $statusCodeMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                }
-                Write-Log -Message "Status message: $statusMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                if ($requestId) {
-                    Write-Log -Message "Request-Id: $requestId" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                }
-                if ($clientRequestId) {
-                    Write-Log -Message "Client-Request-Id: $clientRequestId" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                }
-                if ($retryAfter) {
-                    Write-Log -Message "Retry-After: $retryAfter" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-                }
-                Write-Verbose "[$functionName] The full error message follows below:"
-                Write-Verbose "[$functionName] ----------------------------------------------------------"
-                Write-Verbose "[$functionName] $_"
-                # Raw server body already logged above when available
-            }
-        }
-        Write-Log -Message "Failed to call the Graph API: $_" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "The status code is $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        if ($statusCodeMessage) {
-            Write-Log -Message "$statusCode indicates $statusCodeMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        }
-        if ($statusDescription) {
-            Write-Log -Message "Status description: $statusDescription" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        }
-        Write-Log -Message "Status message: $statusMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "The full error message follows below:" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "----------------------------------------------------------" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "Error: $($_)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "Exception message: $($PSItem.Exception.Message)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "Exception response: $($PSItem.Exception.Response)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        if ($responseBodyRaw) {
-            Write-Log -Message "Server Response (raw): $responseBodyRaw" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        }
-        return $statusCode
-        # return $null
+        $response | Add-Member -NotePropertyName 'statusCode' -NotePropertyValue $statusCode -Force -ErrorAction SilentlyContinue
+        return $response
     }
     Write-Log -Message "Response: $($response)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
     Write-Log -Message "Response value: $($response.value)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
