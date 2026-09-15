@@ -57,7 +57,6 @@ $accessToken = Get-GraphAccessToken @params
 $uri = "users/OreenA@gao.gov/registeredDevices"
 $consistencyLevel = $true
 $extraParameters = "select=operatingSystem"
-$filter = "startswith(operatingSystem,'Windows')"
 
 #region define api parameters
 $apiParams = @{
@@ -91,6 +90,7 @@ if ($null -ne $headers) {
 #endregion define api parameters
 
 if ($accessToken) {
+    Write-Host "Got access token"
     $global:response = Invoke-GraphAPI @apiParams
     if ($response.statusCode -in 200..299) {
         Write-Host "API call succeeded."

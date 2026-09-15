@@ -137,14 +137,6 @@ function Get-GraphAccessToken {
             ErrorMessage = $null
         }
         try {
-            # Get local IP address for diagnostics
-            try {
-                $localIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" -and $_.InterfaceAlias -notlike "*Virtual*" }).IPAddress
-                Write-Verbose "[$functionName] Local IP addresses: $($localIp -join ', ')"
-            }
-            catch {
-                Write-Verbose "[$functionName] Could not get local IP address: $_"
-            }
             # Create HTTP listener
             $listener = New-Object System.Net.HttpListener
             # Make sure redirect URI ends with a slash for matching
@@ -366,8 +358,8 @@ function Get-GraphAccessToken {
                     Write-Verbose "[$functionName] Claim is a number, checking if it is a unix time."
                     if ($value -gt 1000000000 -and $value -lt 3000000000) {
                         Write-Verbose "[$functionName] Claim $key is a unix time, converting to human readable format."
-                        $dt = [DateTimeOffset]::FromUnixTimeSeconds([long]$value).UtcDateTime
-                        $humanClaims[$key] = FormatDateWithTimeZone -DateTime $dt
+                        $dt = [DateTimeOffset]::FromUnixTimeSeconds([long]$value).ToLocalTime()
+                        $humanClaims[$key] = "$($dt | Get-Date -Format 'dddd, MMMM d, yyyy h:mm:ss tt') $($dt.ToString('zzz'))"
                         continue
                     }
                 }
@@ -394,10 +386,6 @@ function Get-GraphAccessToken {
                         2 {
                             $value = 'Certificate'
                             Write-Verbose "[$functionName] AuthenticationMechanism is 2, setting value to $value"
-                        }
-                        default {
-                            $value = $value
-                            Write-Verbose "[$functionName] AuthenticationMechanism is unknown, keeping value as $value"
                         }
                     }
                     $humanClaims[$key] = $value
@@ -429,48 +417,6 @@ function Get-GraphAccessToken {
         }
     }
 
-    function Get-NormalizedExpiryTime {
-        [CmdletBinding()]
-        param(
-            [object]$accessTokenObject
-        )
-        $functionName = $MyInvocation.MyCommand.Name
-        Write-Verbose "[$functionName] Starting function execution"
-        if (-not $accessTokenObject.AbsoluteExpiryTime) {
-            Write-Verbose "[$functionName] No AbsoluteExpiryTime found in token object"
-            Write-Log -logFile $logFile -moduleName $moduleName -logLevel Warning -message "No AbsoluteExpiryTime found in token object"
-            return [datetime]::MinValue
-        }
-
-        try {
-            if ($accessTokenObject.AbsoluteExpiryTime -is [string]) {
-                Write-Verbose "[$functionName] Converting string expiry time to datetime"
-                Write-Log -logFile $logFile -moduleName $moduleName -logLevel Verbose -message "Converting string expiry time to datetime"
-                $parsedTime = [datetime]::Parse($accessTokenObject.AbsoluteExpiryTime).ToLocalTime()
-                Write-Log -logFile $logFile -moduleName $moduleName -logLevel Verbose -message "Parsed expiry time: $parsedTime"
-                # Handle timezone differences
-                if ($parsedTime -lt $accessTokenObject.AbsoluteExpiryTime) {
-                    Write-Verbose "[$functionName] Using original expiry time to resolve timezone differences"
-                    return $accessTokenObject.AbsoluteExpiryTime
-                }
-                return $parsedTime
-            }
-            elseif ($accessTokenObject.AbsoluteExpiryTime.kind -eq 'Utc') {
-                Write-Verbose "[$functionName] Converting UTC expiry time to local time"
-                return $accessTokenObject.AbsoluteExpiryTime.ToLocalTime()
-            }
-            else {
-                Write-Verbose "[$functionName] Using datetime expiry time as-is"
-                return $accessTokenObject.AbsoluteExpiryTime
-            }
-        }
-        catch {
-            Write-Warning "[$functionName] Failed to parse expiry time: $_"
-            Write-Log -logFile $logFile -moduleName $moduleName -logLevel Error -message "Failed to parse expiry time: $_"
-            return [datetime]::MinValue
-        }
-    }
-
     function Get-TokenFromCache {
         [CmdletBinding()]
         param(
@@ -490,91 +436,59 @@ function Get-GraphAccessToken {
             [string]$configRefreshToken
         )
 
-        function Get-CachedTokenObject {
-            [CmdletBinding()]
-            param(
-                [string]$cacheType,
-                [string]$cacheTokenFile,
-                [string]$domain
-            )
-
-            $functionName = $MyInvocation.MyCommand.Name
-            switch ($cacheType) {
-                'memory' {
-                    Write-Verbose "[$functionName] Checking memory cache for access token"
-                    Write-Log -LogFile $LogFile -Module "$functionName" -Message "Checking memory cache for access token" -LogLevel "Verbose"
-                    # Initialize memory cache if it doesn't exist
-                    if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue)) {
-                        Write-Verbose "No memory cache found, initializing new memory cache"
-                        Write-Log -LogFile $LogFile -Module "$functionName" -Message "Initializing memory cache" -LogLevel "Verbose"
-                        New-Variable -Name 'MemoryCache' -Scope Global -Value @{} -Force
-                    }
-
-                    if ($Global:MemoryCache.ContainsKey('accessToken')) {
-                        Write-Log -LogFile $LogFile -Module "$functionName" -Message "Found token in memory cache"
-                        Write-Verbose "[$functionName] Found token in memory cache"
-                        $tokenObject = $Global:MemoryCache['accessToken']
-                        if ($tokenObject.domain -eq $domain) {
-                            Write-Verbose "[$functionName] Found matching token in memory cache for domain: $domain"
-                            Write-Log -LogFile $LogFile -Module "$functionName" -Message "Found matching token in memory cache for domain: $domain"
-                            return $tokenObject
-                        }
-                        else {
-                            Write-Verbose "[$functionName] Memory cache token domain ($($tokenObject.domain)) doesn't match requested domain ($domain)"
-                            Write-Log -LogFile $LogFile -Module "$functionName" -Message "Memory cache token domain ($($tokenObject.domain)) doesn't match requested domain ($domain)"
-                        }
-                    }
-                    else {
-                        Write-Verbose "[$functionName] No token found in memory cache"
-                        Write-Log -LogFile $LogFile -Module "$functionName" -Message "No token found in memory cache"
-                    }
-                    return $null
+        $functionName = $MyInvocation.MyCommand.Name
+        Write-Verbose "[$functionName] Cache lookup for $domain (type=$cacheType, delegated=$delegated)"
+        Write-Log -logFile $logFile -Module $functionName -Message "Cache lookup: domain=$domain, cacheType=$cacheType, delegated=$delegated"
+        $timeBuffer = (Get-Date).AddMinutes($renewalLeadTime)
+        # Load token from the appropriate cache store
+        $accessTokenObject = $null
+        switch ($cacheType) {
+            'memory' {
+                Write-Verbose "[$functionName] Checking memory cache for domain: $domain"
+                Write-Log -LogFile $LogFile -Module $functionName -Message "Checking memory cache for domain: $domain" -LogLevel "Verbose"
+                if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue)) {
+                    New-Variable -Name 'MemoryCache' -Scope Global -Value @{} -Force
                 }
-                'file' {
-                    Write-Verbose "[$functionName] Checking file cache for access token: $cacheTokenFile"
-                    Write-Log -LogFile $LogFile -Module "$functionName" -Message "Checking file cache for access token: $cacheTokenFile"
-                    if (-not (Test-Path -Path $cacheTokenFile)) {
-                        Write-Verbose "[$functionName] Cache file not found: $cacheTokenFile"
-                        Write-Log -LogFile $LogFile -Module "$functionName" -Message "Cache file not found: $cacheTokenFile" -LogLevel "Warning"
-                        return $null
-                    }
-
-                    Write-Log -LogFile $LogFile -Module "$functionName" -Message "Reading token from file cache: $cacheTokenFile"
-                    Write-Verbose "[$functionName] Reading token from file cache: $cacheTokenFile"
-
-                    $tokenContent = Get-Content -Path $cacheTokenFile -Raw -Force
-                    # Parse the token JSON
-                    $tokenObject = ConvertFrom-Json $tokenContent
+                if ($Global:MemoryCache.ContainsKey('accessToken')) {
+                    $tokenObject = $Global:MemoryCache['accessToken']
                     if ($tokenObject.domain -eq $domain) {
-                        Write-Verbose "[$functionName] Found matching token in file cache for domain: $domain"
-                        Write-Log -LogFile $LogFile -Module "$functionName" -Message "Found matching token in file cache for domain: $domain"
-                        return $tokenObject
+                        Write-Verbose "[$functionName] Found matching token in memory cache"
+                        Write-Log -LogFile $LogFile -Module $functionName -Message "Found matching token in memory cache for domain: $domain"
+                        $accessTokenObject = $tokenObject
                     }
                     else {
-                        Write-Verbose "[$functionName] File cache token domain ($($tokenObject.domain)) doesn't match requested domain ($domain)"
-                        Write-Log -LogFile $LogFile -Module "$functionName" -Message "File cache token domain ($($tokenObject.domain)) doesn't match requested domain ($domain)"
+                        Write-Verbose "[$functionName] Memory cache domain mismatch: $($tokenObject.domain) vs $domain"
                     }
-
-                    return $null
                 }
-                default {
-                    Write-Error "[$functionName] Invalid cache type: $cacheType. Use 'file' or 'memory'."
-                    Write-Log -LogFile $LogFile -Module "$functionName" -Message "Invalid cache type: $cacheType. Use 'file' or 'memory'." -LogLevel "Error"
-                    return $null
+                else {
+                    Write-Verbose "[$functionName] No token in memory cache"
                 }
             }
+            'file' {
+                Write-Verbose "[$functionName] Checking file cache: $cacheTokenFile"
+                Write-Log -LogFile $LogFile -Module $functionName -Message "Checking file cache: $cacheTokenFile"
+                if (Test-Path -Path $cacheTokenFile) {
+                    $tokenObject = Get-Content -Path $cacheTokenFile -Raw -Force | ConvertFrom-Json
+                    if ($tokenObject.domain -eq $domain) {
+                        Write-Verbose "[$functionName] Found matching token in file cache"
+                        Write-Log -LogFile $LogFile -Module $functionName -Message "Found matching token in file cache for domain: $domain"
+                        $accessTokenObject = $tokenObject
+                    }
+                    else {
+                        Write-Verbose "[$functionName] File cache domain mismatch: $($tokenObject.domain) vs $domain"
+                        Write-Log -LogFile $LogFile -Module $functionName -Message "File cache domain mismatch: $($tokenObject.domain) vs $domain"
+                    }
+                }
+                else {
+                    Write-Verbose "[$functionName] Cache file not found: $cacheTokenFile"
+                    Write-Log -LogFile $LogFile -Module $functionName -Message "Cache file not found: $cacheTokenFile" -LogLevel "Warning"
+                }
+            }
+            default {
+                Write-Error "[$functionName] Invalid cache type: $cacheType"
+                Write-Log -LogFile $LogFile -Module $functionName -Message "Invalid cache type: $cacheType" -LogLevel "Error"
+            }
         }
-
-        $functionName = $MyInvocation.MyCommand.Name
-        Write-Verbose "[$functionName] Starting token cache retrieval for domain: $domain"
-        Write-Verbose "[$functionName] Cache type: $cacheType, Delegated: $delegated"
-        Write-Log -logFile $logFile -Module $functionName -Message "Starting token cache retrieval for domain: $domain, Cache type: $cacheType, Delegated: $delegated"
-        # Calculate time buffer for token renewal
-        $timeBuffer = (Get-Date).AddMinutes($renewalLeadTime)
-        Write-Verbose "[$functionName] Token renewal buffer time: $timeBuffer"
-        Write-Log -logFile $logFile -Module $functionName -Message "Token renewal buffer time: $timeBuffer"
-        # Get cached token object based on cache type
-        $accessTokenObject = Get-CachedTokenObject -cacheType $cacheType -cacheTokenFile $cacheTokenFile -domain $domain
 
         # If we have a cached token, validate and return it
         if ($accessTokenObject) {
@@ -587,11 +501,23 @@ function Get-GraphAccessToken {
                 return $validToken
             }
 
-            # Token is expired, try to refresh it
-            $refreshedToken = Invoke-TokenRefresh -accessTokenObject $accessTokenObject -delegated $delegated -configRefreshToken $configRefreshToken -clientId $clientId -clientSecret $clientSecret -tenantId $tenantId -scopes $scopes -domain $domain -cacheType $cacheType -cacheTokenFile $cacheTokenFile -cacheFolder $cacheFolder -configFilePath $configFilePath
+            # Token is expired — try refresh token if delegated auth is active
+            $refreshedToken = $null
+            if ($delegated) {
+                $refreshSource = if ($accessTokenObject.refresh_token) {
+                    Write-Verbose "[$functionName] Refreshing using cached refresh token"
+                    $accessTokenObject
+                }
+                elseif ($configRefreshToken) {
+                    Write-Verbose "[$functionName] Refreshing using config refresh token"
+                    @{ refresh_token = $configRefreshToken }
+                }
+                if ($refreshSource) {
+                    $refreshedToken = Get-RefreshToken -accessTokenObject $refreshSource -clientId $clientId -clientSecret $clientSecret -tenantId $tenantId -scopes $scopes -domain $domain -cacheType $cacheType -cacheTokenFile $cacheTokenFile -cacheFolder $cacheFolder -configFilePath $configFilePath
+                }
+            }
             if ($refreshedToken) {
-                Write-Verbose "[$functionName] Token refreshed successfully, returning refreshed token"
-                Write-Log -logFile $logFile -Module $functionName -Message "Token refreshed successfully, returning refreshed token"
+                Write-Verbose "[$functionName] Token refreshed successfully"
                 return $refreshedToken
             }
         }
@@ -625,34 +551,39 @@ function Get-GraphAccessToken {
             return $null
         }
 
-        # Handle different time formats for expiry time
-        $absoluteExpiryTime = Get-NormalizedExpiryTime -accessTokenObject $accessTokenObject
-        Write-Log -logFile $logFile -Module "$functionName" -Message "Cached token expiry time for $domain in $cacheType cache: $absoluteExpiryTime"
-        Write-Verbose "[$functionName] Normalized expiry time: $absoluteExpiryTime"
+        # Normalise AbsoluteExpiryTime — handles string, UTC datetime, or local datetime stored in cache
+        $absoluteExpiryTime = [datetime]::MinValue
+        $rawExpiry = $accessTokenObject.AbsoluteExpiryTime
+        if ($rawExpiry) {
+            try {
+                if ($rawExpiry -is [string]) {
+                    $parsed = [datetime]::Parse($rawExpiry).ToLocalTime()
+                    $absoluteExpiryTime = if ($parsed -lt $rawExpiry) { $rawExpiry } else { $parsed }
+                }
+                elseif ($rawExpiry.Kind -eq [System.DateTimeKind]::Utc) {
+                    $absoluteExpiryTime = $rawExpiry.ToLocalTime()
+                }
+                else {
+                    $absoluteExpiryTime = $rawExpiry
+                }
+            }
+            catch {
+                Write-Warning "[$functionName] Failed to parse token expiry time: $_"
+                Write-Log -LogFile $LogFile -Module $functionName -Message "Failed to parse expiry time: $_" -LogLevel "Error"
+            }
+        }
+        else {
+            Write-Log -LogFile $LogFile -Module $functionName -Message "No AbsoluteExpiryTime in cached token" -LogLevel "Warning"
+        }
+        Write-Verbose "[$functionName] Token expiry: $absoluteExpiryTime (buffer: $timeBuffer)"
         if ($absoluteExpiryTime -gt $timeBuffer) {
             # Token is not expired, but check if scopes match (for delegated auth)
             Write-Log -logFile $logFile -Module "$functionName" -Message "Validating cached token scopes for $domain in $cacheType cache"
             Write-Verbose "[$functionName] Access token is not expired, validating scopes if requested"
 
-            # Normalize requestedScopes to array first (may be passed as space-separated string or array)
-            # BUGFIX: Filter empty elements created by multiple consecutive spaces
-            # Note: Parameter is [string[]] so strings get wrapped in array automatically
-            $requestedScopesArray = @()
-            if ($requestedScopes.Count -eq 1 -and $requestedScopes[0] -match ' ') {
-                # Single element array containing space-separated scopes (string was passed)
-                Write-Verbose "[$functionName] Normalizing space-separated scope string to array - VERSION 2024-11-15-FINAL"
-                $splitScopes = $requestedScopes[0] -split ' '
-                foreach ($scope in $splitScopes) {
-                    if (-not [string]::IsNullOrWhiteSpace($scope)) {
-                        $requestedScopesArray += $scope.Trim()
-                    }
-                }
-            }
-            else {
-                # Already an array or empty
-                $requestedScopesArray = $requestedScopes
-            }
-            Write-Verbose "[$functionName] Requested scopes after normalization (count=$($requestedScopesArray.Count)): $($requestedScopesArray -join ', ')"
+            # Normalise regardless of whether scopes arrived as an array or a single space-delimited string
+            $requestedScopesArray = ($requestedScopes -join ' ') -split '\s+' | Where-Object { $_ }
+            Write-Verbose "[$functionName] Requested scopes: $($requestedScopesArray -join ', ')"
 
             if ($requestedScopesArray -and $requestedScopesArray.Count -gt 0) {
                 Write-Verbose "[$functionName] Validating cached token has required scopes"
@@ -696,7 +627,6 @@ function Get-GraphAccessToken {
                     # Continue with token - expiry is still valid
                 }
             }
-
             Write-Verbose "[$functionName] Access token for $domain is valid until $absoluteExpiryTime"
             Write-Verbose "[$functionName] Using cached access token from $cacheType cache"
             Write-Log -logFile $logFile -Module "$functionName" -Message "Using valid cached access token for $domain from $cacheType cache (expires: $absoluteExpiryTime)"
@@ -749,18 +679,8 @@ function Get-GraphAccessToken {
             Write-Warning "[$functionName] No scope information found in token (neither scp nor roles claims present)"
         }
 
-        Write-Verbose "[$functionName] Successfully extracted token scope: $($tokenScope -join ', ')"
-
-        # Add scope to cached token object
-        Write-Verbose "[$functionName] Adding scope property to cached token object"
-        if (-not $cachedToken.scope) {
-            Write-Verbose "[$functionName] Scope property not found in cached token, adding it"
-            $cachedToken.add('scope', $tokenScope)
-        }
-        else {
-            Write-Verbose "[$functionName] Scope property already exists in cached token. Updating with extracted scopes."
-            $cachedToken.scope = $tokenScope
-        }
+        Write-Verbose "[$functionName] Extracted token scope: $($tokenScope -join ', ')"
+        $cachedToken['scope'] = $tokenScope
 
         # Save access token according to cache type
         if ($cacheType -eq 'memory') {
@@ -774,15 +694,7 @@ function Get-GraphAccessToken {
 
             # Save to memory cache
             $Global:MemoryCache['accessToken'] = $cachedToken
-            Write-Verbose "[$functionName] Token successfully saved to memory cache"
-
-            # Debug: Log what was actually saved
-            if ($Global:MemoryCache['accessToken'].scope) {
-                Write-Verbose "[$functionName] Verified scope is accessible: $($Global:MemoryCache['accessToken'].scope -join ', ')"
-            }
-            else {
-                Write-Warning "[$functionName] Scope property not found in saved token"
-            }
+            Write-Verbose "[$functionName] Token saved to memory cache"
         }
         else {
             Write-Verbose "[$functionName] Saving access token to cache file: $cacheTokenFile"
@@ -795,68 +707,7 @@ function Get-GraphAccessToken {
             try {
                 # Convert token to JSON
                 $tokenJson = $cachedToken | ConvertTo-Json -Depth $maxJSONDepth
-
-                # Check if user encryption password is available (same password used for config file)
-                if ($script:UserEncryptionPassword -or $global:UserEncryptionPassword) {
-                    $userPassword = if ($script:UserEncryptionPassword) { $script:UserEncryptionPassword } else { $global:UserEncryptionPassword }
-
-                    Write-Verbose "[$functionName] Encrypting token before saving to file cache"
-                    Write-Log -LogFile $LogFile -Module "$functionName" -Message "Encrypting token before saving to file cache" -LogLevel "Debug"
-
-                    # Create a temporary file for encryption
-                    $tempFile = [System.IO.Path]::GetTempFileName()
-                    try {
-                        Set-Content -Path $tempFile -Value $tokenJson -Encoding UTF8 -NoNewline
-
-                        # Encrypt the token using the user's password (same as config file)
-                        # The -InMemoryOnly parameter causes Invoke-JsonFileEncryption to return the encrypted content in memory,
-                        # rather than writing it back to the file. A temporary file is still needed because the encryption function
-                        # expects a file input.
-                        $encryptResult = Invoke-JsonFileEncryption -FilePath $tempFile -Key $userPassword -InMemoryOnly
-
-                        if ($encryptResult.Success) {
-                            # Save the encrypted content to the cache file
-                            Set-Content -Path $cacheTokenFile -Value $encryptResult.Content -Force -ErrorAction Stop
-                            Write-Verbose "[$functionName] Access token encrypted and saved successfully to $cacheTokenFile"
-                            Write-Log -LogFile $LogFile -Module "$functionName" -Message "Access token encrypted and saved successfully" -LogLevel "Information"
-                        }
-                        else {
-                            Write-Warning "[$functionName] Failed to encrypt token, saving unencrypted: $($encryptResult.ErrorMessage)"
-                            Write-Log -LogFile $LogFile -Module "$functionName" -Message "Failed to encrypt token, saving unencrypted: $($encryptResult.ErrorMessage)" -LogLevel "Warning"
-                            Set-Content -Path $cacheTokenFile -Value $tokenJson -Force -ErrorAction Stop
-                        }
-                    }
-                    finally {
-                        try {
-                            # Overwrite the file with random data before deletion
-                            if (Test-Path $tempFile) {
-                                $fileInfo = Get-Item $tempFile
-                                $fileLength = $fileInfo.Length
-                                if ($fileLength -gt 0) {
-                                    $randomBytes = New-Object byte[] $fileLength
-                                    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($randomBytes)
-                                    [System.IO.File]::WriteAllBytes($tempFile, $randomBytes)
-                                }
-                                Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-                            }
-                            else {
-                                Write-Verbose "[$functionName] Temporary file $($tempFile) does not exist, skipping secure deletion."
-                            }
-                        }
-                        catch {
-                            Write-Warning "[$functionName] Failed to securely delete temporary file $($tempFile): $_"
-                        }
-                        if (Test-Path $tempFile) {
-                            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue | Out-Null
-                        }
-                    }
-                }
-                else {
-                    Write-Verbose "[$functionName] No user encryption password available, saving token unencrypted"
-                    Write-Log -LogFile $LogFile -Module "$functionName" -Message "No user encryption password available, saving token unencrypted" -LogLevel "Warning"
-                    Set-Content -Path $cacheTokenFile -Value $tokenJson -Force -ErrorAction Stop
-                }
-
+                Set-Content -Path $cacheTokenFile -Value $tokenJson -Force -ErrorAction Stop
                 Write-Verbose "[$functionName] Access token successfully saved to $cacheTokenFile"
             }
             catch {
@@ -865,45 +716,6 @@ function Get-GraphAccessToken {
                 throw
             }
         }
-    }
-
-    function Invoke-TokenRefresh {
-        [CmdletBinding()]
-        param(
-            [object]$accessTokenObject,
-            [bool]$delegated,
-            [string]$configRefreshToken,
-            [string]$clientId,
-            [string]$clientSecret,
-            [string]$tenantId,
-            [string[]]$scopes,
-            [string]$domain,
-            [string]$cacheType,
-            [string]$cacheTokenFile,
-            [string]$cacheFolder,
-            [string]$configFilePath
-        )
-        $functionName = $MyInvocation.MyCommand.Name
-        if (-not $delegated) {
-            Write-Verbose "[$functionName] Not using delegated authentication, skipping refresh token logic"
-            return $null
-        }
-
-        # Try cached refresh token first
-        if ($accessTokenObject.refresh_token) {
-            Write-Verbose "[$functionName] Attempting to refresh token using cached refresh token"
-            return Get-RefreshToken -accessTokenObject $accessTokenObject -clientId $clientId -clientSecret $clientSecret -tenantId $tenantId -scopes $scopes -domain $domain -cacheType $cacheType -cacheTokenFile $cacheTokenFile -cacheFolder $cacheFolder -configFilePath $configFilePath
-        }
-
-        # Try config refresh token as fallback
-        if ($configRefreshToken) {
-            Write-Verbose "[$functionName] Attempting to refresh token using config refresh token"
-            $refreshTokenObject = @{ refresh_token = $configRefreshToken }
-            return Get-RefreshToken -accessTokenObject $refreshTokenObject -clientId $clientId -clientSecret $clientSecret -tenantId $tenantId -scopes $scopes -domain $domain -cacheType $cacheType -cacheTokenFile $cacheTokenFile -cacheFolder $cacheFolder -configFilePath $configFilePath
-        }
-
-        Write-Verbose "[$functionName] No refresh token available for token refresh"
-        return $null
     }
 
     function Get-TokenFromResponse {
@@ -964,30 +776,14 @@ function Get-GraphAccessToken {
         Write-Verbose "[$functionName] Testing refresh token validity with parameters:clientId=$clientId, tenantId=$tenantId, domain=$domain, AuthType=$AuthType"
         Write-Log -LogFile $LogFile -Module "$functionName" -Message "Testing refresh token validity with parameters: refreshToken=$refreshToken, clientId=$clientId, tenantId=$tenantId, scopes=$scopes, domain=$domain, AuthType=$AuthType"
         try {
-            # Ensure scopes are properly formatted for the token refresh
-            $scopesFormatted = $scopes
-            if ($scopes -and -not $scopes.Contains("https://graph.microsoft.com/")) {
-                Write-Verbose "[$functionName] Scopes provided, formatting them for token refresh"
-                Write-Log -LogFile $LogFile -Module "$functionName" -Message "Scopes provided, formatting them for token refresh" -LogLevel "Verbose"
-                $scopesArray = $scopes.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
-                $formattedScopesArray = @()
-                foreach ($scope in $scopesArray) {
-                    if ($scope -eq "offline_access") {
-                        $formattedScopesArray += $scope
-                    }
-                    else {
-                        $formattedScopesArray += "https://graph.microsoft.com/$scope"
-                    }
-                }
-                $scopesFormatted = $formattedScopesArray -join ' '
-            }
+            $scopesFormatted = FormatScopes -scopes $scopes
             $refreshTokenRequestBody = @{
                 client_id     = $clientId
                 refresh_token = $refreshToken
                 grant_type    = 'refresh_token'
                 scope         = $scopesFormatted
             }
-            if ($auth.AuthType -eq 'PublicAuthFlow') {
+            if ($AuthType -eq 'PublicAuthFlow') {
                 Write-Verbose "[$functionName] Public authentication flow detected, client secret will not be included in the request"
                 Write-Log -LogFile $LogFile -Module "$functionName" -Message "Public authentication flow detected, client secret will not be included in the request" -LogLevel "Verbose"
             }
@@ -1134,74 +930,24 @@ function Get-GraphAccessToken {
 
         $functionName = $MyInvocation.MyCommand.Name
         #print log of incoming parameters.
-        Write-Verbose "[$functionName] Launching browser with URL: $url"
-        Write-Verbose "[$functionName] Browser preference: $browser"
-        Write-Verbose "[$functionName] Private session: $private"
-        if ($null -eq $browser -or $browser -eq '') {
-            Write-Verbose "[$functionName] No preferred browser set in settings, using default browser"
-            $browser = 'Default'
+        Write-Verbose "[$functionName] Launching $browser for $url (private=$privateSession)"
+        if ([string]::IsNullOrEmpty($browser)) { $browser = 'Default' }
+        $browserPaths = @{
+            Edge    = @{ Path = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'; PrivateFlag = '--inprivate' }
+            Chrome  = @{ Path = 'C:\Program Files\Google\Chrome\Application\chrome.exe'; PrivateFlag = '--incognito' }
+            Firefox = @{ Path = 'C:\Program Files\Mozilla Firefox\firefox.exe'; PrivateFlag = '-private-window' }
         }
-        switch ($Browser) {
-            'Edge' {
-                Write-Verbose "[$functionName] Opening Edge browser for authentication"
-                if ($privateSession) {
-                    Write-Verbose "[$functionName] Private session detected.  Opening $browser in private mode"
-                    $urlParams = @{
-                        FilePath     = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-                        ArgumentList = "--inprivate", $url
-                    }
-                }
-                else {
-                    $urlParams = @{
-                        FilePath     = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-                        ArgumentList = $url
-                    }
-                }
-            }
-            'Chrome' {
-                Write-Verbose "[$functionName] Opening Chrome browser for authentication"
-                if ($privateSession) {
-                    Write-Verbose "[$functionName] Private session detected.  Opening $browser in private mode"
-                    $urlParams = @{
-                        FilePath     = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-                        ArgumentList = "--incognito", $url
-                    }
-                }
-                else {
-                    $urlParams = @{
-                        FilePath     = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-                        ArgumentList = $url
-                    }
-                }
-            }
-            'Firefox' {
-                Write-Verbose "[$functionName] Opening Firefox browser for authentication"
-                if ($privateSession) {
-                    Write-Verbose "[$functionName] Private session detected.  Opening $preferredBrowser  in private mode"
-                    $urlParams = @{
-                        FilePath     = "C:\Program Files\Mozilla Firefox\firefox.exe"
-                        ArgumentList = "-private-window", $url
-                    }
-                }
-                else {
-                    $urlParams = @{
-                        FilePath     = "C:\Program Files\Mozilla Firefox\firefox.exe"
-                        ArgumentList = $url
-                    }
-                }
-            }
-            default {
-                Write-Verbose "[$functionName] Opening default browser for authentication"
-                $urlParams = @{
-                    FilePath = $url
-                }
-            }
+        if ($browser -eq 'Default') {
+            $urlParams = @{ FilePath = $url }
         }
-        Write-Verbose "[$functionName] Launching $browser with URL: $url"
+        else {
+            $cfg = $browserPaths[$browser]
+            $args = if ($privateSession) { @($cfg.PrivateFlag, $url) } else { @($url) }
+            $urlParams = @{ FilePath = $cfg.Path; ArgumentList = $args }
+        }
         try {
-            # Start the browser with the specified URL
             Start-Process @urlParams
-            Write-Verbose "[$functionName] Browser launched successfully."
+            Write-Verbose "[$functionName] Browser launched."
         }
         catch {
             Write-Error "Failed to launch browser: $_"
@@ -1405,18 +1151,10 @@ function Get-GraphAccessToken {
                 }
                 $accessToken = $null
                 $timeoutSeconds = $deviceCodeResponse.expires_in # Typically 15 minutes
-                Write-Verbose "[$functionName] Token request URL: $tokenRequestUrl"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Token request URL: $tokenRequestUrl"
-                Write-Verbose "[$functionName] Token request body: $($tokenRequestBody | ConvertTo-Json -Depth $maxJSONDepth)"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Token request body: $($tokenRequestBody | ConvertTo-Json -Depth $maxJSONDepth)"
-                Write-Verbose "Timeout for polling: $timeoutSeconds seconds"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Timeout for polling: $timeoutSeconds seconds"
-                $intervalSeconds = $deviceCodeResponse.interval # Typically 5 seconds
-                Write-Verbose "Polling interval: $intervalSeconds seconds"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Polling interval: $intervalSeconds seconds"
+                $intervalSeconds = $deviceCodeResponse.interval
                 $startTime = Get-Date
-                Write-Verbose "[$functionName] Start time for polling: $startTime"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Start time for polling: $startTime"
+                Write-Verbose "[$functionName] Polling: url=$tokenRequestUrl timeout=${timeoutSeconds}s interval=${intervalSeconds}s"
+                Write-Log -LogFile $LogFile -Module $functionName -Message "Polling: url=$tokenRequestUrl timeout=${timeoutSeconds}s interval=${intervalSeconds}s"
                 while ((Get-Date -UFormat %s) -lt ($startTime.AddSeconds($timeoutSeconds) | Get-Date -UFormat %s)) {
                     Write-Verbose "[$functionName] Polling for access token..."
                     Write-Log -LogFile $LogFile -Module $functionName -Message "Polling for access token..."
@@ -1444,62 +1182,10 @@ function Get-GraphAccessToken {
                         }
                     }
                     catch {
-                        # Check if this is the expected "authorization_pending" error (400 Bad Request)
-                        $isAuthPending = $false
-
-                        # Check the HTTP status code first
-                        if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 400) {
-                            Write-Verbose "[$functionName] Received 400 Bad Request during polling - checking if authorization is pending..."
-                            Write-Log -LogFile $LogFile -Module $functionName -Message "Received 400 Bad Request during polling - checking if authorization is pending..."
-                            # Multiple ways to detect authorization_pending:
-                            # 1. Check the exception message for common patterns
-                            $exceptionMessage = $_.Exception.Message
-                            if ($exceptionMessage -like "*authorization_pending*" -or
-                                $exceptionMessage -like "*Bad Request*" -or
-                                $exceptionMessage -like "*400*") {
-                                $isAuthPending = $true
-                                Write-Verbose "[$functionName] Detected authorization_pending from exception message pattern"
-                                Write-Log -LogFile $LogFile -Module $functionName -Message "Detected authorization_pending from exception message pattern"
-                            }
-
-                            # 2. Try to parse the response body if available
-                            if (-not $isAuthPending) {
-                                try {
-                                    $errorResponse = $_.Exception.Response.GetResponseStream()
-                                    if ($errorResponse -and $errorResponse.CanRead) {
-                                        $streamReader = New-Object System.IO.StreamReader($errorResponse)
-                                        $errorMessage = $streamReader.ReadToEnd()
-                                        $streamReader.Close()
-
-                                        if ($errorMessage) {
-                                            $errorJson = $errorMessage | ConvertFrom-Json
-                                            if ($errorJson.error -eq "authorization_pending") {
-                                                $isAuthPending = $true
-                                                Write-Verbose "[$functionName] Confirmed authorization_pending from response body"
-                                                Write-Log -LogFile $LogFile -Module $functionName -Message "Confirmed authorization_pending from response body"
-                                            }
-                                        }
-                                    }
-                                }
-                                catch {
-                                    Write-Verbose "[$functionName] Could not parse error response, but assuming authorization_pending for 400 status"
-                                    Write-Log -LogFile $LogFile -Module $functionName -Message "Could not parse error response, assuming authorization_pending for 400 status"
-                                    # For 400 errors during OAuth device flow polling, assume it's authorization_pending
-                                    $isAuthPending = $true
-                                }
-                            }
-
-                            if ($isAuthPending) {
-                                Write-Verbose "[$functionName] Authorization still pending (from catch block), continuing to poll..."
-                                Write-Log -LogFile $LogFile -Module $functionName -Message "Authorization still pending (from catch block), continuing to poll..."
-                            }
-                        }
-
-                        # Only show warning for unexpected errors, not for authorization_pending
-                        if (-not $isAuthPending) {
-                            Write-Warning "Polling attempt failed: $($_.Exception.Message)"
-                            Write-Verbose "[$functionName] Unexpected error during polling: $($_.Exception | Out-String)"
-                            Write-Log -LogFile $LogFile -Module $functionName -Message "Unexpected error during polling: $($_.Exception.Message)"
+                        # HTTP 400 during device-code polling is always authorization_pending
+                        if (-not ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 400)) {
+                            Write-Warning "Polling error: $($_.Exception.Message)"
+                            Write-Log -LogFile $LogFile -Module $functionName -Message "Unexpected polling error: $($_.Exception.Message)" -LogLevel "Warning"
                         }
                     }
                     Write-Host -NoNewline "."
@@ -1609,15 +1295,8 @@ function Get-GraphAccessToken {
                 scope         = $scopesFormatted
                 code_verifier = $codeVerifier
             }
-            Write-Verbose "[$functionName] Token request parameters:"
-            Write-Verbose "[$functionName]   Endpoint: $tokenEndpoint"
-            Write-Verbose "[$functionName]   Client ID: $clientId"
-            Write-Verbose "[$functionName]   Redirect URI: $redirectUri"
-            Write-Verbose "[$functionName]   Grant Type: authorization_code"
-            Write-Verbose "[$functionName]   Scopes: $scopesFormatted"
-            Write-Log -LogFile $LogFile -Module $functionName -Message "Token request endpoint: $tokenEndpoint"
-            Write-Log -LogFile $LogFile -Module $functionName -Message "Token request grant type: authorization_code"
-            Write-Log -LogFile $LogFile -Module $functionName -Message "Token request scopes: $scopesFormatted"
+            Write-Verbose "[$functionName] Token request: endpoint=$tokenEndpoint clientId=$clientId redirectUri=$redirectUri grantType=authorization_code scopes=$scopesFormatted"
+            Write-Log -LogFile $LogFile -Module $functionName -Message "Token request: endpoint=$tokenEndpoint grantType=authorization_code scopes=$scopesFormatted"
             try {
                 Write-Verbose "[$functionName] Sending token request to $tokenEndpoint"
                 Write-Log -LogFile $LogFile -Module $functionName -Message "Sending token request to endpoint"
@@ -1676,21 +1355,12 @@ function Get-GraphAccessToken {
                 return $null
             }
         }
-        # Log the token response properties (without exposing the actual token)
         if ($tokenResponse) {
-            Write-Verbose "[$functionName] Token response contains the following properties:"
-            Write-Log -LogFile $LogFile -Module $functionName -Message "Processing token response"
-            foreach ($prop in $tokenResponse.PSObject.Properties.Name) {
-                if ($prop -eq "access_token" -or $prop -eq "refresh_token" -or $prop -eq "id_token") {
-                    $tokenLength = $tokenResponse.$prop.Length
-                    Write-Verbose "[$functionName]   $($prop): [Token of length $tokenLength]"
-                    Write-Log -LogFile $LogFile -Module $functionName -Message "Token response contains $($prop) of length $tokenLength"
-                }
-                else {
-                    Write-Verbose "[$functionName]   $($prop): $($tokenResponse.$prop)"
-                    Write-Log -LogFile $LogFile -Module $functionName -Message "Token response property: $($prop) = $($tokenResponse.$prop)"
-                }
+            $tokenSummary = $tokenResponse.PSObject.Properties | ForEach-Object {
+                if ($_.Name -in 'access_token', 'refresh_token', 'id_token') { "$($_.Name)=[len=$($_.Value.Length)]" } else { "$($_.Name)=$($_.Value)" }
             }
+            Write-Verbose "[$functionName] Token response: $($tokenSummary -join ' | ')"
+            Write-Log -LogFile $LogFile -Module $functionName -Message "Token response: $($tokenSummary -join ' | ')"
 
             $cachedToken = Get-TokenFromResponse -tokenResponse $tokenResponse -domain $domain
             Write-Log -LogFile $LogFile -Module $functionName -Message "Retrieved token from response"
@@ -2179,23 +1849,7 @@ function Get-GraphAccessToken {
     }
     #endregion Process config files
 
-    #region Log parameters
-    Write-Verbose "[$functionName] Received parameters:"
-    Write-Verbose "[$functionName] Configuration File: $configFile"
-    Write-Verbose "[$functionName] Renewal Lead Time: $renewalLeadTime"
-    Write-Verbose "[$functionName] Secure String: $SecureString"
-    Write-Verbose "[$functionName] Force New Token: $ForceNewToken"
-    Write-Verbose "[$functionName] Force New Refresh Token: $ForceNewRefreshToken"
-    Write-Verbose "[$functionName] Use Public Auth Flow: $UsePublicAuthFlow"
-    Write-Verbose "[$functionName] Interactive: $Interactive"
-    Write-Verbose "[$functionName] Cache Type: $CacheType"
-    Write-Verbose "[$functionName] Domain: $domain"
-    Write-Verbose "[$functionName] delegated: $delegated"
-    Write-Verbose "[$functionName] Preferred Browser: $preferredBrowser"
-    Write-Verbose "[$functionName] Private Session: $privateSession"
-    Write-Verbose "[$functionName] Scopes: $Scope"
-    Write-Verbose "[$functionName] Config has refresh token: $($null -ne $configRefreshToken)"
-    #endregion Log parameters
+    Write-Verbose "[$functionName] configFile=$configFile renewalLeadTime=$renewalLeadTime SecureString=$SecureString ForceNewToken=$ForceNewToken ForceNewRefreshToken=$ForceNewRefreshToken CacheType=$CacheType domain=$domain delegated=$delegated AuthType=$AuthType preferredBrowser=$preferredBrowser privateSession=$privateSession Scope=$Scope hasRefreshToken=$($null -ne $configRefreshToken)"
 
     # Set up cache paths
     $cacheFolder = Split-Path $configFile
