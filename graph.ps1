@@ -54,8 +54,9 @@ if ($null -ne $auth) {
 #endregion define configuration parameters
 
 $accessToken = Get-GraphAccessToken @params
-$user = 'zuhair@arabictutor.com'
-$uri = "users/$user/registeredDevices"
+$uri = "deviceAppManagement/mobileApps"
+$extraParameters = "expand=assignments"
+$filter = "(isof('microsoft.graph.windowsStoreApp') or isof('microsoft.graph.microsoftStoreForBusinessApp') or isof('microsoft.graph.officeSuiteApp') or isof('microsoft.graph.win32LobApp') or isof('microsoft.graph.windowsMicrosoftEdgeApp') or isof('microsoft.graph.windowsPhone81AppX') or isof('microsoft.graph.windowsPhone81StoreApp') or isof('microsoft.graph.windowsPhoneXAP') or isof('microsoft.graph.windowsAppX') or isof('microsoft.graph.windowsMobileMSI') or isof('microsoft.graph.windowsUniversalAppX') or isof('microsoft.graph.webApp') or isof('microsoft.graph.windowsWebApp') or isof('microsoft.graph.winGetApp'))&$orderby=displayName'"
 $consistencyLevel = $true
 
 #region define api parameters
