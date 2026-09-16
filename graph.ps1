@@ -52,9 +52,19 @@ if ($null -ne $auth) {
     if ($APIVersion) { $params.APIVersion = $APIVersion } elseif ($auth.APIVersion) { $params.APIVersion = $auth.APIVersion }
 }
 #endregion define configuration parameters
-
+$endpoints = Get-Content -Path (Join-Path $PSScriptRoot "ListOfMicrosoftGraphEndpoints.json") -Raw -Force -ErrorAction SilentlyContinue | ConvertFrom-Json
 $accessToken = Get-GraphAccessToken @params
 $uri = "deviceAppManagement/mobileApps"
+#validate that the uri is in the list of endpoints.
+$endpointInfo = $endpoints | Where-Object endpoint -EQ $uri
+if ($endpointInfo) {
+    Write-Host "Endpoint found: $($endpointInfo.endpoint)"
+    Write-Host "Available in v1.0: $($endpointInfo.'v1.0')"
+    Write-Host "Available in beta: $($endpointInfo.'beta')"
+}
+else {
+    Write-Host "Endpoint not found: $uri"
+}
 $extraParameters = "expand=assignments"
 $filter = "(isof('microsoft.graph.windowsStoreApp') or isof('microsoft.graph.microsoftStoreForBusinessApp') or isof('microsoft.graph.officeSuiteApp') or isof('microsoft.graph.win32LobApp') or isof('microsoft.graph.windowsMicrosoftEdgeApp') or isof('microsoft.graph.windowsPhone81AppX') or isof('microsoft.graph.windowsPhone81StoreApp') or isof('microsoft.graph.windowsPhoneXAP') or isof('microsoft.graph.windowsAppX') or isof('microsoft.graph.windowsMobileMSI') or isof('microsoft.graph.windowsUniversalAppX') or isof('microsoft.graph.webApp') or isof('microsoft.graph.windowsWebApp') or isof('microsoft.graph.winGetApp'))&$orderby=displayName'"
 $consistencyLevel = $true

@@ -569,8 +569,8 @@ function Invoke-GraphAPI {
         $response | Add-Member -NotePropertyName 'statusCode' -NotePropertyValue $statusCode -Force -ErrorAction SilentlyContinue
         return $response
     }
-    Write-Log -Message "Response: $($response)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-    Write-Log -Message "Response value: $($response.value)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+    Write-Log -Message "Response: $($response)" -LogFile $logFile -Module $functionName -LogLevel Information
+    Write-Log -Message "Response value: $($response.value)" -LogFile $logFile -Module $functionName -LogLevel Information
     return $response
 }
 

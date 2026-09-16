@@ -4,9 +4,9 @@ function Write-Log {
         [Parameter(Mandatory)][string]$Message,
         [Parameter(Mandatory)][string]$LogFile,
         [Parameter(Mandatory)][string]$Module,
-        [ValidateSet('Information', 'Warning', 'Error', 'Verbose')][string]$LogLevel = 'Information',
+        [ValidateSet('Information', 'Warning', 'Error', 'Debug', 'Verbose')][string]$LogLevel = 'Information',
         [int]$MaxLogSizeMB = 10,
-        [switch]$NoEcho
+        [bool]$NoEcho = $true
     )
     if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt ($MaxLogSizeMB * 1MB)) {
         Rename-Item -Path $LogFile -NewName ([IO.Path]::ChangeExtension($LogFile, 'bak')) -Force -ErrorAction SilentlyContinue
