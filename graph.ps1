@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$configFile = (Join-Path $PSScriptRoot ".secrets\config.json"),
-    [string]$paramsFile = (Join-Path $PSScriptRoot ".secrets\params.json"),
+    [string]$paramsFile = (Join-Path $PSScriptRoot "params.json"),
     [int]$renewalLeadTime,
     [switch]$SecureString,
     [parameter(parameterSetName = 'delegated')]
@@ -54,6 +54,7 @@ if ($null -ne $auth) {
 #endregion define configuration parameters
 
 $accessToken = Get-GraphAccessToken @params
+$user = 'zuhair@arabictutor.com'
 $uri = "users/$user/registeredDevices"
 $consistencyLevel = $true
 

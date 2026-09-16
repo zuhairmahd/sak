@@ -942,8 +942,8 @@ function Get-GraphAccessToken {
         }
         else {
             $cfg = $browserPaths[$browser]
-            $args = if ($privateSession) { @($cfg.PrivateFlag, $url) } else { @($url) }
-            $urlParams = @{ FilePath = $cfg.Path; ArgumentList = $args }
+            $arguments = if ($privateSession) { @($cfg.PrivateFlag, $url) } else { @($url) }
+            $urlParams = @{ FilePath = $cfg.Path; ArgumentList = $arguments }
         }
         try {
             Start-Process @urlParams
