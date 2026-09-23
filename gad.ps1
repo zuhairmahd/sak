@@ -27,9 +27,12 @@ param(
     [string]$APIVersion
 )
 
+
 . (Join-Path $PSScriptRoot "functions\get-GraphAccessToken.ps1")
 . (Join-Path $PSScriptRoot "functions\Write-Log.ps1")
 . (Join-Path $PSScriptRoot "functions\Invoke-GraphAPI.ps1")
+. Join-Path $PSScriptRoot "functions\Invoke-AutopilotDiagnostics.ps1"
+
 
 $script:logFile = Join-Path $PSScriptRoot "test.log"
 #region define configuration parameters
@@ -53,75 +56,22 @@ if ($null -ne $auth) {
 }
 #endregion define configuration parameters
 
-$templateId = "a8d6fa0e-1e66-455b-bb51-8ce0dde1559e"
-$uri = "deviceManagement/templates/{$templateId}"
-$extraParameters = "expand=settings"
-# $filter = "templateType eq 'securityBaseline'"
-# $consistencyLevel = $true
 
-#region validate endpoint
-$endpoints = Get-Content -Path (Join-Path $PSScriptRoot "ListOfMicrosoftGraphEndpoints.json") -Raw -Force -ErrorAction SilentlyContinue | ConvertFrom-Json
-$endpointInfo = $endpoints | Where-Object endpoint -EQ $uri
-if ($endpointInfo) {
-    Write-Host "Endpoint found: $($endpointInfo.endpoint)"
-    Write-Host "Available in v1.0: $($endpointInfo.'v1.0')"
-    Write-Host "Available in beta: $($endpointInfo.'beta')"
-}
-else {
-    Write-Host "Endpoint not found: $uri"
-}
-#endregion validate endpoint
 
 $accessToken = Get-GraphAccessToken @params
-#region define api parameters
-$apiParams = @{
-    accessToken  = $accessToken
-    ResourcePath = $uri
-}
-if (-not [string]::IsNullOrWhiteSpace($Method)) {
-    $apiParams.Method = $Method
-}
-if (-not [string]::IsNullOrWhiteSpace($extraParameters)) {
-    $apiParams.extraParameters = $extraParameters
-}
-if (-not [string]::IsNullOrWhiteSpace($APIVersion)) {
-    $apiParams.apiVersion = $APIVersion
-}
-if (-not [string]::IsNullOrWhiteSpace($Search)) {
-    $apiParams.search = $Search
-}
-if ($consistencyLevel) {
-    $apiParams.consistencyLevel = $consistencyLevel
-}
-if (-not [string]::IsNullOrWhiteSpace($filter)) {
-    $apiParams.filter = $filter
-}
-if (-not [string]::IsNullOrWhiteSpace($Body)) {
-    $apiParams.Body = $Body
-}
-if ($null -ne $headers) {
-    $apiParams.headers = $headers
-}
-#endregion define api parameters
 
-if ($accessToken) {
-    Write-Host "Got access token"
-    $global:response = Invoke-GraphAPI @apiParams
-    if ($response.statusCode -in 200..299) {
-        Write-Host "API call succeeded."
-    }
-    else {
-        Write-Host "API call failed with status code $($response.statusCode)."
-        #parce and print the properties of the $response.error object
-        if ($response.error) {
-            Write-Host "Error message: $($response.error.message)"
-            foreach ($property in $response.error.PSObject.Properties) {
-                Write-Host "$($property.Name): $($property.Value)"
-            }
-        }
-    }
+
+Add-Type -AssemblyName System.Windows.Forms
+$openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+$openFileDialog.Filter = "Autopilot Compressed Logs (*.zip;*.cab)|*.zip;*.cab|All Files (*.*)|*.*"
+$openFileDialog.Title = "Select a .zip or .cab file"
+if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    $fileName = $openFileDialog.FileName
 }
 else {
-    Write-Host "Failed to acquire access token."
+    Write-Host "No file selected." -ForegroundColor Yellow
+    exit 1
 }
+
+Invoke-AutopilotDiagnostics -RootPath $PSScriptRoot -accessToken $accessToken -fileName $fileName
 
