@@ -31,7 +31,7 @@ param(
 . (Join-Path $PSScriptRoot "functions\get-GraphAccessToken.ps1")
 . (Join-Path $PSScriptRoot "functions\Write-Log.ps1")
 . (Join-Path $PSScriptRoot "functions\Invoke-GraphAPI.ps1")
-. Join-Path $PSScriptRoot "functions\Invoke-AutopilotDiagnostics.ps1"
+. (Join-Path $PSScriptRoot "functions\Invoke-AutopilotDiagnostics.ps1")
 
 
 $script:logFile = Join-Path $PSScriptRoot "test.log"
