@@ -71,3 +71,4 @@ targets-gao.psd1
 
 # Exception: Allow temp-named files in functions directory
 !functions/**/*temp*
+baseline.json

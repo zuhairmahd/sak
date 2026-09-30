@@ -27,11 +27,50 @@ param(
     [string]$APIVersion
 )
 
-. (Join-Path $PSScriptRoot "functions\get-GraphAccessToken.ps1")
-. (Join-Path $PSScriptRoot "functions\Write-Log.ps1")
-. (Join-Path $PSScriptRoot "functions\Invoke-GraphAPI.ps1")
+#region import functions.
+. $PSScriptRoot\functions\Find-FolderPath.ps1
+. $PSScriptRoot\functions\Test-PowerShellSyntax.ps1
+$functionsFolder = Find-FolderPath -Path "$psscriptRoot" -FolderName "functions"
+if (Test-Path $functionsFolder) {
+    Write-Verbose "[$scriptName] Importing functions from $functionsFolder"
+    $functions = Get-ChildItem -Path "$functionsFolder\*.ps1" -File
+    foreach ($function in $functions) {
+        Write-Verbose " [$scriptName] Importing function $function"
+        $syntaxCheck = Test-PowerShellSyntax -File $function
+        if ($syntaxCheck.HasErrors) {
+            Write-Host "Syntax errors found in $($function.FullName). Skipping import." -ForegroundColor Red
+            write-log -logFile $logFile -Module $scriptName -Message "Syntax errors found in $($function.FullName). Skipping import." -LogLevel "Error"
+            continue
+        }
+        . $function.FullName
+    }
+}
+else {
+    Write-Host 'Cannot find the functions folder. Exiting script.' -ForegroundColor Red
+    exit 1
+}
+#endregion import functions.
 
-$script:logFile = Join-Path $PSScriptRoot "test.log"
+#region define variables
+$scriptName = $MyInvocation.MyCommand.Name
+$logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+$Continue = $false
+$menuItems = @(
+    @{
+        name        = "GetAccessToken"
+        description = "Get an access token you can use in this session"
+    },
+    @{
+        name        = "AddUserToGroup"
+        description = "Add a user to a specified group"
+    },
+    @{
+        name        = "Continue"
+        description = "Continue executing the rest of the script"
+    }
+)
+#endregion define variables
+
 #region define configuration parameters
 $params = @{
     configFile = $configFile
@@ -53,9 +92,41 @@ if ($null -ne $auth) {
 }
 #endregion define configuration parameters
 
-$templateId = "a8d6fa0e-1e66-455b-bb51-8ce0dde1559e"
-$uri = "deviceManagement/templates/{$templateId}"
-$extraParameters = "expand=settings"
+Write-Host "===============================================================" -ForegroundColor Cyan
+Write-Host "Welcome to SAK, the Swiss Army Knife for Intune Administrators!" -ForegroundColor Cyan
+Write-Host "===============================================================" -ForegroundColor Cyan
+
+#if no commandline parameters are passed, display the menu.
+if (-not $PSBoundParameters.Keys.Count) {
+    write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
+    $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
+    switch ($userChoice) {
+        "GetAccessToken" {
+            $global:accessToken = Get-GraphAccessToken @params
+            Write-Host "Access token acquired successfully." -ForegroundColor Green
+        }
+        "Continue" {
+            $continue = $true
+        }
+        "AddUserToGroup" {
+            # Add your logic for adding a user to a group here
+        }
+        default {
+            Write-Host "Exiting script."
+            write-log -logFile $logFile -FinishLogging
+            write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
+            exit 1
+        }
+    }
+}
+if (-not $continue) {
+    exit 0
+}
+
+# $templateId = "66df8dce-0166-4b82-92f7-1f74e3ca17a3_5"
+# $uri = "deviceManagement/configurationPolicyTemplates/$templateId/settingTemplates"
+# $uri = "deviceManagement/templateSettings/$baseId"
+# $extraParameters = "expand=templateSettings"
 # $filter = "templateType eq 'securityBaseline'"
 # $consistencyLevel = $true
 
