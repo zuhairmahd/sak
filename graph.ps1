@@ -105,11 +105,30 @@ if (-not $PSBoundParameters.Keys.Count) {
             $global:accessToken = Get-GraphAccessToken @params
             Write-Host "Access token acquired successfully." -ForegroundColor Green
         }
+        "AddUserToGroup" {
+            $userPrincipalName = Read-Host "Enter the User Principal Name (UPN) of the user to add"
+            $groupDisplayName = Read-Host "Enter the display name of the group"
+            $accessToken = Get-GraphAccessToken @params
+            #sanity check: make sure we have all parameters
+            if (-not $userPrincipalName) {
+                throw "User Principal Name is required."
+            }
+            if (-not $groupDisplayName) {
+                throw "Group Display Name is required."
+            }
+            if (-not $accessToken) {
+                throw "Access token could not be acquired."
+            }
+            $response = Add-EntraGroupMemberByName -UserPrincipalName $userPrincipalName -GroupDisplayName $groupDisplayName -AccessToken $accessToken
+            if ($response.success) {
+                Write-Host $response.message -ForegroundColor Green
+            }
+            else {
+                Write-Host $response.message -ForegroundColor Red
+            }
+        }
         "Continue" {
             $continue = $true
-        }
-        "AddUserToGroup" {
-            # Add your logic for adding a user to a group here
         }
         default {
             Write-Host "Exiting script."
