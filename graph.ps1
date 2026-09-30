@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [switch]$continue,
     [string]$configFile = (Join-Path $PSScriptRoot ".secrets\config.json"),
     [string]$paramsFile = (Join-Path $PSScriptRoot "params.json"),
     [int]$renewalLeadTime,
@@ -54,7 +55,7 @@ else {
 #region define variables
 $scriptName = $MyInvocation.MyCommand.Name
 $logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-$Continue = $false
+$Continue = if ($continue) { $true } else { $false }
 $menuItems = @(
     @{
         name        = "GetAccessToken"
@@ -92,56 +93,56 @@ if ($null -ne $auth) {
 }
 #endregion define configuration parameters
 
-Write-Host "===============================================================" -ForegroundColor Cyan
-Write-Host "Welcome to SAK, the Swiss Army Knife for Intune Administrators!" -ForegroundColor Cyan
-Write-Host "===============================================================" -ForegroundColor Cyan
-
-#if no commandline parameters are passed, display the menu.
-if (-not $PSBoundParameters.Keys.Count) {
-    write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
-    $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
-    switch ($userChoice) {
-        "GetAccessToken" {
-            $global:accessToken = Get-GraphAccessToken @params
-            Write-Host "Access token acquired successfully." -ForegroundColor Green
-        }
-        "AddUserToGroup" {
-            $userPrincipalName = Read-Host "Enter the User Principal Name (UPN) of the user to add"
-            $groupDisplayName = Read-Host "Enter the display name of the group"
-            $accessToken = Get-GraphAccessToken @params
-            #sanity check: make sure we have all parameters
-            if (-not $userPrincipalName) {
-                throw "User Principal Name is required."
+if (-not $continue) {
+    Write-Host "===============================================================" -ForegroundColor Cyan
+    Write-Host "Welcome to SAK, the Swiss Army Knife for Intune Administrators!" -ForegroundColor Cyan
+    Write-Host "===============================================================" -ForegroundColor Cyan
+    #if no commandline parameters are passed, display the menu.
+    if (-not $PSBoundParameters.Keys.Count) {
+        write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
+        $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
+        switch ($userChoice) {
+            "GetAccessToken" {
+                $global:accessToken = Get-GraphAccessToken @params
+                Write-Host "Access token acquired successfully." -ForegroundColor Green
             }
-            if (-not $groupDisplayName) {
-                throw "Group Display Name is required."
+            "AddUserToGroup" {
+                $userPrincipalName = Read-Host "Enter the User Principal Name (UPN) of the user to add"
+                $groupDisplayName = Read-Host "Enter the display name of the group"
+                $accessToken = Get-GraphAccessToken @params
+                #sanity check: make sure we have all parameters
+                if (-not $userPrincipalName) {
+                    throw "User Principal Name is required."
+                }
+                if (-not $groupDisplayName) {
+                    throw "Group Display Name is required."
+                }
+                if (-not $accessToken) {
+                    throw "Access token could not be acquired."
+                }
+                $response = Add-EntraGroupMemberByName -UserPrincipalName $userPrincipalName -GroupDisplayName $groupDisplayName -AccessToken $accessToken
+                if ($response.success) {
+                    Write-Host $response.message -ForegroundColor Green
+                }
+                else {
+                    Write-Host $response.message -ForegroundColor Red
+                }
             }
-            if (-not $accessToken) {
-                throw "Access token could not be acquired."
+            "Continue" {
+                $continue = $true
             }
-            $response = Add-EntraGroupMemberByName -UserPrincipalName $userPrincipalName -GroupDisplayName $groupDisplayName -AccessToken $accessToken
-            if ($response.success) {
-                Write-Host $response.message -ForegroundColor Green
+            default {
+                Write-Host "Exiting script."
+                write-log -logFile $logFile -FinishLogging
+                write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
+                exit 1
             }
-            else {
-                Write-Host $response.message -ForegroundColor Red
-            }
-        }
-        "Continue" {
-            $continue = $true
-        }
-        default {
-            Write-Host "Exiting script."
-            write-log -logFile $logFile -FinishLogging
-            write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
-            exit 1
         }
     }
+    if (-not $continue) {
+        exit 0
+    }
 }
-if (-not $continue) {
-    exit 0
-}
-
 # $templateId = "66df8dce-0166-4b82-92f7-1f74e3ca17a3_5"
 # $uri = "deviceManagement/configurationPolicyTemplates/$templateId/settingTemplates"
 # $uri = "deviceManagement/templateSettings/$baseId"
