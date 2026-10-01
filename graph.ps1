@@ -107,11 +107,11 @@ if (-not $continue) {
                 Write-Host "Access token acquired successfully." -ForegroundColor Green
             }
             "AddUserToGroup" {
-                $userPrincipalName = Read-Host "Enter the User Principal Name (UPN) of the user to add"
-                $groupDisplayName = Read-Host "Enter the display name of the group"
+                [array]$userPrincipalNames = Get-UserInput -message "Enter the User Principal Name (UPN) of the user to add" -inputType "array"
+                $groupDisplayName = Get-UserInput -message "Enter the display name of the group" -inputType "string"
                 $accessToken = Get-GraphAccessToken @params
                 #sanity check: make sure we have all parameters
-                if (-not $userPrincipalName) {
+                if (-not $userPrincipalNames -or ($userPrincipalNames.Count -eq 0)) {
                     throw "User Principal Name is required."
                 }
                 if (-not $groupDisplayName) {
@@ -120,12 +120,16 @@ if (-not $continue) {
                 if (-not $accessToken) {
                     throw "Access token could not be acquired."
                 }
-                $response = Add-EntraGroupMemberByName -UserPrincipalName $userPrincipalName -GroupDisplayName $groupDisplayName -AccessToken $accessToken
-                if ($response.success) {
-                    Write-Host $response.message -ForegroundColor Green
-                }
-                else {
-                    Write-Host $response.message -ForegroundColor Red
+                $response = Add-EntraGroupMemberByName -UserPrincipalNames $userPrincipalNames -GroupDisplayName $groupDisplayName -AccessToken $accessToken
+                $summaryColor = if ($response.success) { 'Green' } else { 'Yellow' }
+                Write-Host "Results: $($response.addedCount) added, $($response.alreadyMemberCount) already member, $($response.failedCount) failed of $($response.totalRequested) requested." -ForegroundColor $summaryColor
+                foreach ($result in $response.results) {
+                    $resultColor = switch ($result.status) {
+                        'Added'         { 'Green' }
+                        'AlreadyMember' { 'Yellow' }
+                        default         { 'Red' }
+                    }
+                    Write-Host "  [$($result.status)] $($result.upn): $($result.message)" -ForegroundColor $resultColor
                 }
             }
             "Continue" {

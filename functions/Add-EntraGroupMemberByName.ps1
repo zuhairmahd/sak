@@ -468,14 +468,30 @@ function Add-EntraGroupMemberByName {
     }
 
     try {
-        # 1. Resolve group — exact match, no prompting
-        $groupInfo = if ($batchMode) { Get-EntraDirectoryObject -EntityType Group -EntityName $GroupDisplayName -AccessToken $AccessToken } else { Get-EntraDirectoryObject -EntityType Group -EntityName $GroupDisplayName -AccessToken $AccessToken -FindSimilar }
+        # 1. Resolve group; interactive mode prompts when fuzzy match returns multiple results
+        $groupInfo = if ($batchMode) {
+            Get-EntraDirectoryObject -EntityType Group -EntityName $GroupDisplayName -AccessToken $AccessToken
+        }
+        else {
+            Get-EntraDirectoryObject -EntityType Group -EntityName $GroupDisplayName -AccessToken $AccessToken -FindSimilar
+        }
         if ($null -eq $groupInfo) {
             [void]$results.Add(@{ upn = '*'; status = 'Failed'; message = "Group '$GroupDisplayName' was not found in Entra ID." })
             $returnObject.failedCount = $UserPrincipalNames.Count
             return $returnObject
         }
-        $targetGroup = $groupInfo[0].value | Select-Object -First 1
+        $selectedGroupName = if (-not $batchMode -and $groupInfo[1]) {
+            Show-DirectoryObjectList -EntityList $groupInfo[0].value -EntityType Group
+        }
+        else {
+            $groupInfo[0].value[0].displayName
+        }
+        $targetGroup = $groupInfo[0].value | Where-Object { $_.displayName -eq $selectedGroupName } | Select-Object -First 1
+        if ($null -eq $targetGroup) {
+            [void]$results.Add(@{ upn = '*'; status = 'Failed'; message = "Group selection was canceled." })
+            $returnObject.failedCount = $UserPrincipalNames.Count
+            return $returnObject
+        }
         Write-Verbose "[$functionName] Resolved Group: $($targetGroup.displayName) ($($targetGroup.id))"
 
         # 2. Guard: dynamic groups cannot have members added manually
@@ -487,17 +503,34 @@ function Add-EntraGroupMemberByName {
             return $returnObject
         }
 
-        # 3. Resolve each user — exact match, no prompting
+        # 3. Resolve each user; interactive mode prompts when fuzzy match returns multiple results
         $resolvedUsers = @{}
         foreach ($upn in $UserPrincipalNames) {
-            $userInfo = if ($batchMode) { Get-EntraDirectoryObject -EntityType User -EntityName $upn -AccessToken $AccessToken } else { Get-EntraDirectoryObject -EntityType User -EntityName $upn -AccessToken $AccessToken -FindSimilar }
+            $userInfo = if ($batchMode) {
+                Get-EntraDirectoryObject -EntityType User -EntityName $upn -AccessToken $AccessToken
+            }
+            else {
+                Get-EntraDirectoryObject -EntityType User -EntityName $upn -AccessToken $AccessToken -FindSimilar
+            }
             if ($null -eq $userInfo) {
                 Write-Verbose "[$functionName] User not found: $upn"
                 [void]$results.Add(@{ upn = $upn; status = 'NotFound'; message = "User '$upn' was not found in Entra ID." })
                 $returnObject.failedCount++
                 continue
             }
-            $targetUser = $userInfo[0].value | Select-Object -First 1
+            $selectedUPN = if (-not $batchMode -and $userInfo[1]) {
+                Show-DirectoryObjectList -EntityList $userInfo[0].value -EntityType User
+            }
+            else {
+                $userInfo[0].value[0].userPrincipalName
+            }
+            $targetUser = $userInfo[0].value | Where-Object { $_.userPrincipalName -eq $selectedUPN } | Select-Object -First 1
+            if ($null -eq $targetUser) {
+                Write-Verbose "[$functionName] User selection canceled for: $upn"
+                [void]$results.Add(@{ upn = $upn; status = 'Failed'; message = "User selection was canceled for '$upn'." })
+                $returnObject.failedCount++
+                continue
+            }
             Write-Verbose "[$functionName] Resolved User: $($targetUser.displayName) ($($targetUser.id))"
             $resolvedUsers[$upn] = $targetUser.id
         }
