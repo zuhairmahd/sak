@@ -113,8 +113,6 @@ function Show-DirectoryObjectList {
     }
 
     # Create selection menu
-    $menuName = if ($EntityType -eq "User") { "userMenu" } else { "groupMenu" }
-
     $menu = @()
     Write-Verbose "[$functionName] Creating $EntityType menu with $($EntityList.Count) items"
 
