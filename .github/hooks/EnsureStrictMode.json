@@ -1,0 +1,6 @@
+{
+  "name": "EnsureStrictMode",
+  "type": "preToolUse",
+  "description": "Activate PowerShell strict mode for every script in the project.",
+  "command": "Set-StrictMode -Version Latest"
+}
