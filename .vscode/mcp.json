@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "strata": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["C:\\Users\\you\\Strata\\tools\\strata_mcp.py"]
+    }
+  }
+}
