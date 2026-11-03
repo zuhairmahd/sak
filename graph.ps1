@@ -150,9 +150,10 @@ if (-not $continue) {
 # $templateId = "66df8dce-0166-4b82-92f7-1f74e3ca17a3_5"
 # $uri = "deviceManagement/configurationPolicyTemplates/$templateId/settingTemplates"
 # $uri = "deviceManagement/templateSettings/$baseId"
-# $extraParameters = "expand=templateSettings"
+$uri = "deviceManagement/windowsAutopilotDeviceIdentities"
+$extraParameters = "top=1000"
 # $filter = "templateType eq 'securityBaseline'"
-# $consistencyLevel = $true
+$consistencyLevel = $true
 
 #region validate endpoint
 $endpoints = Get-Content -Path (Join-Path $PSScriptRoot "ListOfMicrosoftGraphEndpoints.json") -Raw -Force -ErrorAction SilentlyContinue | ConvertFrom-Json
@@ -204,6 +205,8 @@ if ($accessToken) {
     $global:response = Invoke-GraphAPI @apiParams
     if ($response.statusCode -in 200..299) {
         Write-Host "API call succeeded."
+        $numberOfEntriesReturned = if ($response.value) { $response.value.Count } else { 0 }            
+        Write-Host "Number of entries returned: $numberOfEntriesReturned"
     }
     else {
         Write-Host "API call failed with status code $($response.statusCode)."
