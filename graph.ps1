@@ -66,6 +66,10 @@ $menuItems = @(
         description = "Add a user to a specified group"
     },
     @{
+        name        = "CallGraphEndpoint"
+        description = "Call a Graph API endpoint"
+    },      
+    @{
         name        = "Continue"
         description = "Continue executing the rest of the script"
     }
@@ -102,6 +106,28 @@ if (-not $continue) {
         write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
         $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
         switch ($userChoice) {
+            "CallGraphEndpoint" {
+                $endpoint = Get-UserInput -message "Enter the Graph API endpoint" -inputType "string"
+                $method = Get-UserInput -message "Enter the HTTP method (GET, POST, PATCH, DELETE)" -inputType "string"
+                $body = Get-UserInput -message "Enter the request body (if applicable)" -inputType "string"
+                $accessToken = Get-GraphAccessToken @params
+                if (-not $endpoint) {
+                    throw "Graph API endpoint is required."
+                }
+                if (-not $method) {
+                    throw "HTTP method is required."
+                }
+                if (-not $accessToken) {
+                    throw "Access token could not be acquired."
+                }
+                $global:response = Invoke-GraphRequest -Endpoint $endpoint -Method $method -Body $body -AccessToken $accessToken
+                if ($global:response.statusCode -ge 200 -and $global:response.statusCode -lt 300) {
+                    Write-Host "API call successful.`n The value has been returned to `$$global:response`." -ForegroundColor Green                          
+                }
+                else {
+                    Write-Host "API call failed with status code $($global:response.statusCode).`n The value has been returned to `$$global:response`." -ForegroundColor Red
+                }
+            }                               
             "GetAccessToken" {
                 $global:accessToken = Get-GraphAccessToken @params
                 Write-Host "Access token acquired successfully." -ForegroundColor Green
@@ -125,9 +151,9 @@ if (-not $continue) {
                 Write-Host "Results: $($response.addedCount) added, $($response.alreadyMemberCount) already member, $($response.failedCount) failed of $($response.totalRequested) requested." -ForegroundColor $summaryColor
                 foreach ($result in $response.results) {
                     $resultColor = switch ($result.status) {
-                        'Added'         { 'Green' }
+                        'Added' { 'Green' }
                         'AlreadyMember' { 'Yellow' }
-                        default         { 'Red' }
+                        default { 'Red' }
                     }
                     Write-Host "  [$($result.status)] $($result.upn): $($result.message)" -ForegroundColor $resultColor
                 }
@@ -154,6 +180,11 @@ $uri = "deviceManagement/windowsAutopilotDeviceIdentities"
 $extraParameters = "top=1000"
 # $filter = "templateType eq 'securityBaseline'"
 $consistencyLevel = $true
+# $APIVersion = "beta"
+# $method = ""
+# $body = ""
+# $search = ""
+
 
 #region validate endpoint
 $endpoints = Get-Content -Path (Join-Path $PSScriptRoot "ListOfMicrosoftGraphEndpoints.json") -Raw -Force -ErrorAction SilentlyContinue | ConvertFrom-Json
@@ -169,37 +200,7 @@ else {
 #endregion validate endpoint
 
 $accessToken = Get-GraphAccessToken @params
-#region define api parameters
-$apiParams = @{
-    accessToken  = $accessToken
-    ResourcePath = $uri
-}
-if (-not [string]::IsNullOrWhiteSpace($Method)) {
-    $apiParams.Method = $Method
-}
-if (-not [string]::IsNullOrWhiteSpace($extraParameters)) {
-    $apiParams.extraParameters = $extraParameters
-}
-if (-not [string]::IsNullOrWhiteSpace($APIVersion)) {
-    $apiParams.apiVersion = $APIVersion
-}
-if (-not [string]::IsNullOrWhiteSpace($Search)) {
-    $apiParams.search = $Search
-}
-if ($consistencyLevel) {
-    $apiParams.consistencyLevel = $consistencyLevel
-}
-if (-not [string]::IsNullOrWhiteSpace($filter)) {
-    $apiParams.filter = $filter
-}
-if (-not [string]::IsNullOrWhiteSpace($Body)) {
-    $apiParams.Body = $Body
-}
-if ($null -ne $headers) {
-    $apiParams.headers = $headers
-}
-#endregion define api parameters
-
+$apiParams = Get-ApiParams -accessToken $accessToken -uri $uri -extraParameters $extraParameters -consistencyLevel $consistencyLevel -method $method -APIVersion $APIVersion -Search $search -Body $body -headers $headers -filter $filter
 if ($accessToken) {
     Write-Host "Got access token"
     $global:response = Invoke-GraphAPI @apiParams
