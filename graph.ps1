@@ -173,6 +173,8 @@ if (-not $continue) {
         exit 0
     }
 }
+
+
 # $templateId = "66df8dce-0166-4b82-92f7-1f74e3ca17a3_5"
 # $uri = "deviceManagement/configurationPolicyTemplates/$templateId/settingTemplates"
 # $uri = "deviceManagement/templateSettings/$baseId"
@@ -185,19 +187,6 @@ $consistencyLevel = $true
 # $body = ""
 # $search = ""
 
-
-#region validate endpoint
-$endpoints = Get-Content -Path (Join-Path $PSScriptRoot "ListOfMicrosoftGraphEndpoints.json") -Raw -Force -ErrorAction SilentlyContinue | ConvertFrom-Json
-$endpointInfo = $endpoints | Where-Object endpoint -EQ $uri
-if ($endpointInfo) {
-    Write-Host "Endpoint found: $($endpointInfo.endpoint)"
-    Write-Host "Available in v1.0: $($endpointInfo.'v1.0')"
-    Write-Host "Available in beta: $($endpointInfo.'beta')"
-}
-else {
-    Write-Host "Endpoint not found: $uri"
-}
-#endregion validate endpoint
 
 $accessToken = Get-GraphAccessToken @params
 $apiParams = Get-ApiParams -accessToken $accessToken -uri $uri -extraParameters $extraParameters -consistencyLevel $consistencyLevel -method $method -APIVersion $APIVersion -Search $search -Body $body -headers $headers -filter $filter

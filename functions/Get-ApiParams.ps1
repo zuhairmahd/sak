@@ -9,11 +9,25 @@ function Get-ApiParams {
         [bool]$consistencyLevel = $false,
         [string]$filter,
         [string]$Body,
-        [hashtable]$headers
+        [hashtable]$headers,
+        [switch]$ValidateEndpoint
     )
 
     if (-not $accessToken) { throw "Access token is required." }
     if (-not $uri) { throw "Resource URI is required." }       
+    if ($ValidateEndpoint) {
+        $endpoints = Get-Content -Path (Join-Path $PSScriptRoot "ListOfMicrosoftGraphEndpoints.json") -Raw -Force -ErrorAction SilentlyContinue | ConvertFrom-Json
+        $endpointInfo = $endpoints | Where-Object endpoint -EQ $uri
+        if ($endpointInfo) {
+            Write-Host "Endpoint found: $($endpointInfo.endpoint)"
+            Write-Host "Available in v1.0: $($endpointInfo.'v1.0')"
+            Write-Host "Available in beta: $($endpointInfo.'beta')"
+        }
+        else {
+            Write-Host "Endpoint not found: $uri"
+        }
+    }
+    
     $apiParams = @{
         accessToken  = $accessToken
         ResourcePath = $uri
