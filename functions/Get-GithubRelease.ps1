@@ -84,7 +84,7 @@ function Get-GithubRelease {
     if ($hasToken) {
         $headers['Authorization'] = "Bearer $([System.Net.NetworkCredential]::new('', $AccessToken).Password)"
     }
-    $uri = if ($tag -eq 'latest') { "https://api.github.com/repos/$owner/$repo/releases/latest" } else { "https://api.github.com/repos/$owner/$repo/releases/tags/$tag" }
+    $uri = if ($tag -eq 'latest') { "https://api.github.com/repos/$owner/$repo/releases/latest" } else { "https://api.github.com/repos/$owner/$repo/releases/tags/$([uri]::EscapeDataString($tag))" }
     Write-Verbose "[$functionName] Starting for $owner/$repo from $uri (private: $Private, token supplied: $hasToken)"
     Write-Log -logFile $LogFile -Module $functionName -Message "Starting Get-GithubRelease for $owner/$repo from $uri (private: $Private, token supplied: $hasToken)" -LogLevel "INFORMATION"
     try {
@@ -126,16 +126,35 @@ function Get-GithubRelease {
         if ($Private) {
             # browser_download_url returns 404 for private assets, so use the API asset URL.
             # The API answers with a redirect to a pre-signed URL; follow it manually so the token is not forwarded to the storage host.
+            # The API may also answer HTTP 200 with the asset body streamed directly, in which case save that body.
             $downloadUri = $null
+            $apiStatus = 0
             $apiRequest = [System.Net.HttpWebRequest]::Create($asset.url)
             $apiRequest.AllowAutoRedirect = $false
             $apiRequest.UserAgent = $headers['User-Agent']
             $apiRequest.Accept = 'application/octet-stream'
             $apiRequest.Headers.Add('Authorization', $headers['Authorization'])
             $apiResponse = $apiRequest.GetResponse()
-            try { $downloadUri = $apiResponse.Headers['Location'] } finally { $apiResponse.Close() }
-            if ([string]::IsNullOrWhiteSpace($downloadUri)) { throw "GitHub did not return a download location for $($asset.name)." }
-            $response = Invoke-WebRequest -Uri $downloadUri -Headers @{ 'User-Agent' = $headers['User-Agent'] } -OutFile $outputPath -PassThru -UseBasicParsing -ErrorAction Stop
+            try {
+                $apiStatus = [int]$apiResponse.StatusCode
+                if ($apiStatus -eq 200) {
+                    $responseStream = $apiResponse.GetResponseStream()
+                    $fileStream = [System.IO.File]::Create($outputPath)
+                    try { $responseStream.CopyTo($fileStream) }
+                    finally { $fileStream.Dispose(); $responseStream.Dispose() }
+                }
+                else {
+                    $downloadUri = $apiResponse.Headers['Location']
+                }
+            }
+            finally { $apiResponse.Close() }
+            if ($apiStatus -eq 200) {
+                $response = [pscustomobject]@{ StatusCode = 200 }
+            }
+            else {
+                if ([string]::IsNullOrWhiteSpace($downloadUri)) { throw "GitHub did not return a download location for $($asset.name) (HTTP $apiStatus)." }
+                $response = Invoke-WebRequest -Uri $downloadUri -Headers @{ 'User-Agent' = $headers['User-Agent'] } -OutFile $outputPath -PassThru -UseBasicParsing -ErrorAction Stop
+            }
         }
         else {
             $response = Invoke-WebRequest -Uri $asset.browser_download_url -Headers @{ 'User-Agent' = $headers['User-Agent'] } -OutFile $outputPath -PassThru -UseBasicParsing -ErrorAction Stop
