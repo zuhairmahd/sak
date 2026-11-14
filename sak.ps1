@@ -6,6 +6,7 @@ param(
     [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
     [switch]$GetUninstallCommands,
     [Parameter(ParameterSetName = "GetUninstallCommands")]
+    [ValidateScript({ $folder = Split-Path -Path $_ -Parent; if ([string]::IsNullOrEmpty($folder)) { $folder = '.' }; if (Test-Path -Path $folder -PathType Container) { $true } else { throw "The folder '$folder' does not exist." } })]
     [string]$ExportPath,
     [Parameter(ParameterSetName = "KillGuiltyProcesses", Mandatory = $true)]
     [switch]$KillGuiltyProcesses,
@@ -14,6 +15,7 @@ param(
     [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [switch]$ManageServices,
     [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
     [string[]]$ServiceNames,
     [Parameter(ParameterSetName = "ManageServices", Mandatory = $true)]
     [ValidateSet("Start", "Stop", "Restart", "Status")]
@@ -21,33 +23,64 @@ param(
     [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
     [switch]$CreateZIPArchive,
     [Parameter(ParameterSetName = "CreateZIPArchive", Mandatory = $true)]
+    [ValidatePattern('(?i)\.zip$')]
     [string]$ArchiveDestination,
     [Parameter(ParameterSetName = "CheckProductInstallStatus", Mandatory = $true)]
     [switch]$CheckProductInstallStatus,
     [Parameter(ParameterSetName = "CheckProductInstallStatus")]
+    [ValidateScript({ $folder = Split-Path -Path $_ -Parent; if ([string]::IsNullOrEmpty($folder)) { $folder = '.' }; if (Test-Path -Path $folder -PathType Container) { $true } else { throw "The folder '$folder' does not exist." } })]
     [string]$ProductStatusExportPath,
     [Parameter(ParameterSetName = "ExtractEmailAddresses", Mandatory = $true)]
     [switch]$ExtractEmailAddresses,
     [Parameter(ParameterSetName = "ExtractEmailAddresses")]
+    [ValidateScript({ $folder = Split-Path -Path $_ -Parent; if ([string]::IsNullOrEmpty($folder)) { $folder = '.' }; if (Test-Path -Path $folder -PathType Container) { $true } else { throw "The folder '$folder' does not exist." } })]
     [string]$EmailExportPath,
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
     [switch]$DownloadFileFromURL,
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
+    [ValidatePattern('^https?://\S+$')]
     [string]$DownloadURL,
     [Parameter(ParameterSetName = "DownloadFileFromURL", Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
     [string]$DownloadDestination,
     [Parameter(ParameterSetName = "GetLocalComputerInfo", Mandatory = $true)]
     [switch]$GetLocalComputerInfo,
     [Parameter(ParameterSetName = "GetMSIProperties", Mandatory = $true)]
     [switch]$GetMSIProperties,
     [Parameter(ParameterSetName = "GetMSIProperties", Mandatory = $true)]
+    [ValidateScript({ if ((Test-Path -LiteralPath $_ -PathType Leaf) -and $_ -match '(?i)\.msi$') { $true } else { throw "'$_' is not an existing .msi file." } })]
     [string[]]$MSIFilePath,
     [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
     [switch]$WhoisLookup,
     [Parameter(ParameterSetName = "WhoisLookup", Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$')]
     [string]$WhoisTarget,
     [Parameter(ParameterSetName = "WhoisLookup")]
+    [ValidatePattern('^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$')]
     [string]$WhoisServer,
+    [Parameter(ParameterSetName = "GetGithubRelease", Mandatory = $true)]
+    [switch]$GetGithubRelease,
+    [Parameter(ParameterSetName = "GetGithubRelease", Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$')]
+    [string]$GithubOwner,
+    [Parameter(ParameterSetName = "GetGithubRelease", Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z0-9._-]{1,100}$')]
+    [string]$GithubRepo,
+    [Parameter(ParameterSetName = "GetGithubRelease")]
+    [ValidateNotNullOrEmpty()]
+    [string]$GithubTag = "latest",
+    [Parameter(ParameterSetName = "GetGithubRelease")]
+    [ValidateNotNullOrEmpty()]
+    [string]$GithubAssetPattern = "*",
+    [Parameter(ParameterSetName = "GetGithubRelease")]
+    [ValidateNotNullOrEmpty()]
+    [string]$GithubOutputDirectory,
+    [Parameter(ParameterSetName = "GetGithubRelease")]
+    [switch]$GithubNonInteractive,
+    [Parameter(ParameterSetName = "GetGithubRelease")]
+    [switch]$GithubPrivate,
+    [Parameter(ParameterSetName = "GetGithubRelease")]
+    [securestring]$GithubAccessToken,
     # Shared input across sets that need a file path or keyword(s)
     [Parameter(ParameterSetName = "CheckRegKeyExists", Mandatory = $true)]
     [Parameter(ParameterSetName = "GetUninstallCommands", Mandatory = $true)]
@@ -296,12 +329,15 @@ $menuItems = @(
     @{
         name        = "GetMSIProperties"
         description = "Retrieve properties from MSI files."
+    },
+    @{
+        name        = "GetGithubRelease"
+        description = "Download a release asset from a GitHub repository."
     }
 )
 $AdminMessage = "You must be an administrator to perform this operation. Please run the script as an administrator."
 #endregion define variables
 
-write-log -logFile $logFile -StartLogging
 Write-Host "===============================================================" -ForegroundColor Cyan
 Write-Host "Welcome to SAK, the Swiss Army Knife for System Administrators!" -ForegroundColor Cyan
 Write-Host "===============================================================" -ForegroundColor Cyan
@@ -311,6 +347,7 @@ if (-not $PSBoundParameters.Keys.Count) {
     write-log -logFile $LogFile -Module $scriptName -Message "No parameters provided. Displaying menu for user selection." -LogLevel "Information"
     $userChoice = Show-NumericMenu -choices $menuItems -banner "Select an action to perform:" -RequireEnter
 
+    try {
     switch ($userChoice) {
         "CheckRegKeyExists" {
             $inputString = Get-UserInput -message "Enter the path to the registry keys file:"
@@ -371,7 +408,6 @@ if (-not $PSBoundParameters.Keys.Count) {
             if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
                 Write-Host $adminMessage -ForegroundColor Red
                 write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: script not run as administrator." -LogLevel "Error"
-                write-log -logFile $LogFile -Finishlogging
                 exit 1
             }
             $cleanupNetworkProfiles = $true
@@ -381,12 +417,110 @@ if (-not $PSBoundParameters.Keys.Count) {
             $GetMSIProperties = $true
             [array]$MSIFilePath = Get-UserInput -message "Enter the path(s) to the MSI file(s) to retrieve properties from:" -inputType "array"
         }
+        "GetGithubRelease" {
+            $GetGithubRelease = $true
+            $githubOwnerPattern = '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$'
+            $githubRepoPattern = '^[A-Za-z0-9._-]{1,100}$'
+            $ghOwner = $null
+            $ghRepo = $null
+            $ghTag = "latest"
+            $ghPattern = "*"
+            $ghPrivate = $false
+            $ghToken = $null
+            $fieldsToAsk = @('owner', 'repo', 'tag', 'pattern', 'private')
+            $confirmChoices = @(
+                @{ name = "Proceed"; description = "Download using these settings." },
+                @{ name = "ChangeOwner"; description = "Change the repository owner." },
+                @{ name = "ChangeRepo"; description = "Change the repository name." },
+                @{ name = "ChangeTag"; description = "Change the release tag." },
+                @{ name = "ChangePattern"; description = "Change the asset name pattern." },
+                @{ name = "ChangePrivate"; description = "Change the private repository setting or access token." }
+            )
+            do {
+                foreach ($field in $fieldsToAsk) {
+                    switch ($field) {
+                        'owner' {
+                            do {
+                                $ghOwner = (Get-UserInput -message "Enter the GitHub repository owner").Trim()
+                                if ($ghOwner -notmatch $githubOwnerPattern) {
+                                    Write-Host "Invalid owner. Use letters, numbers and hyphens only." -ForegroundColor Yellow
+                                }
+                            } while ($ghOwner -notmatch $githubOwnerPattern)
+                        }
+                        'repo' {
+                            do {
+                                $ghRepo = (Get-UserInput -message "Enter the GitHub repository name").Trim()
+                                if ($ghRepo -notmatch $githubRepoPattern) {
+                                    Write-Host "Invalid repository name. Use letters, numbers, '.', '_' and '-' only." -ForegroundColor Yellow
+                                }
+                            } while ($ghRepo -notmatch $githubRepoPattern)
+                        }
+                        'tag' {
+                            $tagInput = Get-UserInput -message "Enter the release tag (or leave blank for latest)"
+                            $ghTag = if ([string]::IsNullOrWhiteSpace($tagInput)) { "latest" } else { $tagInput.Trim() }
+                        }
+                        'pattern' {
+                            $patternInput = Get-UserInput -message "Enter the asset name pattern (e.g. *linux_amd64*, or leave blank for all)"
+                            $ghPattern = if ([string]::IsNullOrWhiteSpace($patternInput)) { "*" } else { $patternInput.Trim() }
+                        }
+                        'private' {
+                            $ghPrivate = Get-UserInput -message "Is this a private repository?" -inputType "bool"
+                            $ghToken = $null
+                            if ($ghPrivate) {
+                                do {
+                                    $ghToken = Read-Host -Prompt "Enter a GitHub access token (required for private repositories)" -AsSecureString
+                                    if ($ghToken.Length -eq 0) {
+                                        Write-Host "An access token is required for private repositories." -ForegroundColor Yellow
+                                    }
+                                } while ($ghToken.Length -eq 0)
+                            }
+                        }
+                    }
+                }
+                Write-Host "`nGitHub release download settings:" -ForegroundColor Cyan
+                Write-Host "  Owner:         $ghOwner"
+                Write-Host "  Repository:    $ghRepo"
+                Write-Host "  Tag:           $ghTag"
+                Write-Host "  Asset pattern: $ghPattern"
+                Write-Host "  Private repo:  $ghPrivate"
+                if ($ghPrivate) {
+                    Write-Host "  Access token:  provided"
+                }
+                $confirmChoice = Show-NumericMenu -choices $confirmChoices -banner "`nConfirm your selection:" -RequireEnter
+                $fieldsToAsk = switch ($confirmChoice) {
+                    "Proceed" { @() }
+                    "ChangeOwner" { @('owner') }
+                    "ChangeRepo" { @('repo') }
+                    "ChangeTag" { @('tag') }
+                    "ChangePattern" { @('pattern') }
+                    "ChangePrivate" { @('private') }
+                    default {
+                        Write-Host "GitHub release download cancelled."
+                        write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: cancelled by user at confirmation." -LogLevel "Warning"
+                        exit 0
+                    }
+                }
+            } while (@($fieldsToAsk).Count -gt 0)
+            $GithubOwner = $ghOwner
+            $GithubRepo = $ghRepo
+            $GithubTag = $ghTag
+            $GithubAssetPattern = $ghPattern
+            $GithubPrivate = $ghPrivate
+            if ($ghPrivate) {
+                $GithubAccessToken = $ghToken
+            }
+        }
         default {
             Write-Host "Exiting script."
-            write-log -logFile $logFile -FinishLogging
             write-log -logFile $LogFile -Module $scriptName -Message "Exiting script." -LogLevel "Warning"
             exit 1
         }
+    }
+    }
+    catch {
+        Write-Host "Invalid input: $($_.Exception.Message)" -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "Invalid menu input: $($_.Exception.Message)" -LogLevel "Error"
+        exit 1
     }
 }
 
@@ -872,7 +1006,6 @@ if ($cleanupNetworkProfiles) {
     if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
         Write-Host $adminMessage -ForegroundColor Red
         write-log -logFile $LogFile -Module $scriptName -Message "CleanupNetworkProfiles: script not run as administrator." -LogLevel "Error"
-        write-log -logFile $LogFile -Finishlogging
         exit 1
     }
     Write-Host "Getting all network profiles..."
@@ -952,6 +1085,52 @@ if ($GetMSIProperties) {
     }
 }
 
-write-log -logFile $logFile -FinishLogging
+if ($GetGithubRelease) {
+    if ($GithubPrivate -and -not $GithubAccessToken) {
+        Write-Host "An access token (-GithubAccessToken) is required for private repositories." -ForegroundColor Red
+        write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: private repository requested without an access token." -LogLevel "Error"
+        $exitCode = 1
+    }
+    else {
+        try {
+            $githubParams = @{
+                owner   = $GithubOwner
+                repo    = $GithubRepo
+                tag     = $GithubTag
+                pattern = $GithubAssetPattern
+            }
+            if (-not [string]::IsNullOrWhiteSpace($GithubOutputDirectory)) { $githubParams.OutputDirectory = $GithubOutputDirectory }
+            if ($GithubNonInteractive) { $githubParams.NonInteractive = $true }
+            if ($GithubPrivate) {
+                $githubParams.Private = $true
+                $githubParams.AccessToken = $GithubAccessToken
+            }
+            $statusCode = Get-GithubRelease @githubParams
+            if ($statusCode -eq 0) {
+                Write-Host "No matching GitHub release asset found." -ForegroundColor Yellow
+                write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: no matching asset found or download cancelled." -LogLevel "Warning"
+            }
+            elseif ($statusCode -eq 200) {
+                Write-Host "GitHub release asset downloaded successfully." -ForegroundColor Green
+                write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: asset downloaded successfully." -LogLevel "Information"
+            }
+            elseif ($statusCode -eq -1) {
+                Write-Host "More than one asset matched and -GithubNonInteractive was specified. Refine -GithubAssetPattern." -ForegroundColor Yellow
+                write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: multiple assets matched in non-interactive mode." -LogLevel "Warning"
+                $exitCode = 1
+            }
+            else {
+                Write-Host "Failed to download GitHub release asset. Status code: $statusCode" -ForegroundColor Red
+                write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: failed with status code $statusCode" -LogLevel "Error"
+                $exitCode = 1
+            }
+        }
+        catch {
+            Write-Host "An error occurred while downloading GitHub release asset: $_" -ForegroundColor Red
+            write-log -logFile $LogFile -Module $scriptName -Message "GetGithubRelease: error occurred: $_" -LogLevel "Error"
+            $exitCode = 1
+        }
+    }
+}
 exit $exitCode
 

@@ -190,7 +190,10 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
                                 if ($name -eq 'InstallDate') {
                                     Write-Verbose "[$functionName] Normalizing InstallDate value: $value"
                                     write-log -logFile $LogFile -Module $scriptName -Message "Normalizing InstallDate value: $value" -LogLevel "Verbose"
-                                    $value = [datetime]::ParseExact($value, 'yyyyMMdd', $null)
+                                    $parsedDate = [datetime]::MinValue
+                                    if ([datetime]::TryParseExact([string]$value, 'yyyyMMdd', $null, [System.Globalization.DateTimeStyles]::None, [ref]$parsedDate)) {
+                                        $value = $parsedDate
+                                    }
                                 }
                                 $productObj | Add-Member -MemberType NoteProperty -Name $name -Value $value -Force
                                 if ($name -eq 'PSPath') {
@@ -218,11 +221,13 @@ https://learn.microsoft.com/windows/win32/msi/uninstall-registry-key
                                 Write-Verbose "[$functionName] Writing QuietUninstall property"
                                 $productObj | Add-Member -MemberType NoteProperty -Name QuietUninstall -Value $QuietUninstall -Force
                             }
-                            $SizeMB = if ($props.EstimatedSize) { [math]::Round($props.EstimatedSize / 1024, 2) } else { $null }
+                            $estimatedSizeKB = 0
+                            [void][double]::TryParse([string]$props.EstimatedSize, [ref]$estimatedSizeKB)
+                            $SizeMB = if ($estimatedSizeKB) { [math]::Round($estimatedSizeKB / 1024, 2) } else { $null }
                             if (-not ([string]::IsNullOrWhiteSpace($SizeMB) -and $NoEmptyStrings)) {
                                 $productObj | Add-Member -MemberType NoteProperty -Name SizeMB -Value $SizeMB -Force
                             }
-                            $SizeKB = if ($props.EstimatedSize) { $props.EstimatedSize } else { 0 }
+                            $SizeKB = if ($estimatedSizeKB) { $estimatedSizeKB } else { 0 }
                             if (-not ([string]::IsNullOrWhiteSpace($SizeKB) -and $NoEmptyStrings)) {
                                 $productObj | Add-Member -MemberType NoteProperty -Name SizeKB -Value $SizeKB -Force
                             }
