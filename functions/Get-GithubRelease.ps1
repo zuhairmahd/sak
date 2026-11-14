@@ -67,6 +67,66 @@ function Get-GithubRelease {
         [securestring]$AccessToken
     )
 
+    # Streams a response to disk and reports progress. Removes the partial file if the copy fails.
+    function Save-StreamWithProgress {
+        param(
+            [Parameter(Mandatory = $true)][System.IO.Stream]$Source,
+            [Parameter(Mandatory = $true)][string]$Path,
+            [long]$TotalBytes,
+            [string]$Activity = 'Downloading'
+        )
+        $fileStream = [System.IO.File]::Create($Path)
+        $succeeded = $false
+        try {
+            $buffer = New-Object byte[] 81920
+            $copied = 0L
+            $timer = [System.Diagnostics.Stopwatch]::StartNew()
+            $lastUpdate = -1000
+            while (($read = $Source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+                $copied += $read
+                if ($timer.ElapsedMilliseconds - $lastUpdate -ge 200) {
+                    $lastUpdate = $timer.ElapsedMilliseconds
+                    $status = if ($TotalBytes -gt 0) { '{0:N1} MB of {1:N1} MB' -f ($copied / 1MB), ($TotalBytes / 1MB) } else { '{0:N1} MB' -f ($copied / 1MB) }
+                    if ($TotalBytes -gt 0) {
+                        Write-Progress -Activity $Activity -Status $status -PercentComplete ([math]::Min(100, [int](($copied * 100) / $TotalBytes)))
+                    }
+                    else {
+                        Write-Progress -Activity $Activity -Status $status
+                    }
+                }
+            }
+            $succeeded = $true
+        }
+        finally {
+            $fileStream.Dispose()
+            Write-Progress -Activity $Activity -Completed
+            if (-not $succeeded) { Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    # Downloads a URL (following redirects) to disk with progress and returns the HTTP status code.
+    function Save-UriWithProgress {
+        param(
+            [Parameter(Mandatory = $true)][string]$Uri,
+            [Parameter(Mandatory = $true)][string]$Path,
+            [Parameter(Mandatory = $true)][string]$UserAgent,
+            [long]$TotalBytes,
+            [string]$Activity = 'Downloading'
+        )
+        $request = [System.Net.HttpWebRequest]::Create($Uri)
+        $request.UserAgent = $UserAgent
+        $webResponse = $request.GetResponse()
+        try {
+            if ($TotalBytes -le 0) { $TotalBytes = $webResponse.ContentLength }
+            $stream = $webResponse.GetResponseStream()
+            try { Save-StreamWithProgress -Source $stream -Path $Path -TotalBytes $TotalBytes -Activity $Activity }
+            finally { $stream.Dispose() }
+            return [int]$webResponse.StatusCode
+        }
+        finally { $webResponse.Close() }
+    }
+
     $functionName = $MyInvocation.MyCommand.Name
     $statusCode = 0
     $menu = @()
@@ -140,9 +200,8 @@ function Get-GithubRelease {
                 $apiStatus = [int]$apiResponse.StatusCode
                 if ($apiStatus -eq 200) {
                     $responseStream = $apiResponse.GetResponseStream()
-                    $fileStream = [System.IO.File]::Create($outputPath)
-                    try { $responseStream.CopyTo($fileStream) }
-                    finally { $fileStream.Dispose(); $responseStream.Dispose() }
+                    try { Save-StreamWithProgress -Source $responseStream -Path $outputPath -TotalBytes ([long]$asset.size) -Activity "Downloading $($asset.name)" }
+                    finally { $responseStream.Dispose() }
                 }
                 else {
                     $downloadUri = $apiResponse.Headers['Location']
@@ -154,11 +213,13 @@ function Get-GithubRelease {
             }
             else {
                 if ([string]::IsNullOrWhiteSpace($downloadUri)) { throw "GitHub did not return a download location for $($asset.name) (HTTP $apiStatus)." }
-                $response = Invoke-WebRequest -Uri $downloadUri -Headers @{ 'User-Agent' = $headers['User-Agent'] } -OutFile $outputPath -PassThru -UseBasicParsing -ErrorAction Stop
+                $downloadStatus = Save-UriWithProgress -Uri $downloadUri -Path $outputPath -UserAgent $headers['User-Agent'] -TotalBytes ([long]$asset.size) -Activity "Downloading $($asset.name)"
+                $response = [pscustomobject]@{ StatusCode = $downloadStatus }
             }
         }
         else {
-            $response = Invoke-WebRequest -Uri $asset.browser_download_url -Headers @{ 'User-Agent' = $headers['User-Agent'] } -OutFile $outputPath -PassThru -UseBasicParsing -ErrorAction Stop
+            $downloadStatus = Save-UriWithProgress -Uri $asset.browser_download_url -Path $outputPath -UserAgent $headers['User-Agent'] -TotalBytes ([long]$asset.size) -Activity "Downloading $($asset.name)"
+            $response = [pscustomobject]@{ StatusCode = $downloadStatus }
         }
         if ($response.StatusCode -ne 200) {
             $statusCode = $response.StatusCode
