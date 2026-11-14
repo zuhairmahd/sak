@@ -84,7 +84,8 @@ function Get-GithubRelease {
     if ($hasToken) {
         $headers['Authorization'] = "Bearer $([System.Net.NetworkCredential]::new('', $AccessToken).Password)"
     }
-    $uri = if ($tag -eq 'latest') { "https://api.github.com/repos/$owner/$repo/releases/latest" } else { "https://api.github.com/repos/$owner/$repo/releases/tags/$tag" }
+    $encodedTag = [uri]::EscapeDataString($tag)
+    $uri = if ($tag -eq 'latest') { "https://api.github.com/repos/$owner/$repo/releases/latest" } else { "https://api.github.com/repos/$owner/$repo/releases/tags/$encodedTag" }
     Write-Verbose "[$functionName] Starting for $owner/$repo from $uri (private: $Private, token supplied: $hasToken)"
     Write-Log -logFile $LogFile -Module $functionName -Message "Starting Get-GithubRelease for $owner/$repo from $uri (private: $Private, token supplied: $hasToken)" -LogLevel "INFORMATION"
     try {
