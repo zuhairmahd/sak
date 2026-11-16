@@ -1,4 +1,4 @@
-[CmdletBinding(DefaultParameterSetName = "Menu")]
+[CmdletBinding()]
 param(
     [string[]]$keyword,
     [switch]$All
@@ -175,6 +175,8 @@ else {
 $scriptName = $MyInvocation.MyCommand.Name
 $logFile = Join-Path -Path $env:TEMP\sak -ChildPath "logs\$($scriptName)_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
 $keywords = if ($keyword) { @($keyword) } else { @("Python") }
+$userName = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName -split '\\' | Select-Object -Last 1
+$sid = (New-Object System.Security.Principal.NTAccount($userName)).Translate([System.Security.Principal.SecurityIdentifier]).Value
 $exitCode = 0
 #endregion define variables
 
@@ -217,6 +219,13 @@ try {
         }
         Write-Host "`n------------------------`n"
         # $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
+        if ($fileDetectionRule.success) {
+            Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
+        }
+        else {
+            Write-Host "No suitable executable found for this product." -ForegroundColor Yellow
+        }
+        $fileDetectionRule = Get-FileDetectionRule -InstallLocation $product.InstallLocation
         if ($fileDetectionRule.success) {
             Write-Host "File Detection Rule: $($fileDetectionRule.criteria)"
         }
